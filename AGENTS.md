@@ -172,10 +172,12 @@ relevant; do not imply the setup is legally "licensed for training."
   virtual / 54 G sparse); Stage 4 (golden VM 9000 created + VMDK imported + boots).
 - **Key fixes:** EBS VMs need **`--cpu Westmere`** (host panics the OL6 UEK
   kernel); SSH to the appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**.
-- **In progress:** Stage 5 — VM boots, hostname `ebs.example.com`, DHCP
-  `192.168.100.223`; still to set static IP, start EBS, verify login page,
-  change passwords.
-- **Not yet done:** snapshot `golden-clean` (Stage 6), then clones + client VMs.
+- **In progress:** Stage 5 — VM boots, host `ebs`/`ebs.example.com`, static IP
+  `192.168.100.223`. EBS **started** (DB `EBSDB` + app tier, ports 8000/1521), but
+  the **HTTP login page returns 500** (OC4J servlet error). Suspect the FND `.dbc`
+  still has a placeholder DB host → see `PROGRESS.md` "Stage 5 blocker".
+- **Not yet done:** resolve the 500, change passwords, snapshot `golden-clean`
+  (Stage 6), then clones + client VMs.
 - Resolved 2026-09-29: platform **12.1.3**; staging **`ebs-staging` VM**;
   credentials `~/.ebs-lab.env` (mode `600`); client = **one OL7.9 VM per student**
   with 32-bit Firefox ESR52 + 32-bit Oracle JRE 8, accessed via **noVNC**

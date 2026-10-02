@@ -5,12 +5,15 @@ Live status of the EBS lab build. **Update this file as you go** — it is the
 `MVP-RUNBOOK.md`; this file only tracks *execution*.
 
 - **Last updated:** 2026-10-02
-- **Overall status:** Stage 0–4 done · **Stage 5 in progress (VM boots; network
-  DHCP `192.168.100.223`; SSH working)**
-- **Next action:** set static IP, start EBS via the `app` menu, verify the login
-  page, change default passwords → then Stage 6 snapshot.
+- **Overall status:** Stage 0–4 done · **Stage 5 in progress — EBS is UP but the
+  HTTP login page returns 500 (OC4J servlet error) — unresolved**
+- **Next action:** read the FND `.dbc` (suspect placeholder `DB_HOST=host_name`)
+  and the OACORE/OC4J log; if the DB values are placeholders, regenerate instance
+  config via `configwebentry.sh` or `adautocfg.sh` (see "Stage 5 blocker").
 - **Key fixes so far:** EBS VMs need **`--cpu Westmere`** (not `host`); SSH to the
-  appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**.
+  appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**; start scripts run as **`oracle`**.
+- **Picking up on another machine?** The durable state is this repo. Continue by
+  reading `AGENTS.md` → `PROGRESS.md`, then run the "Stage 5 blocker" commands.
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 
@@ -197,8 +200,8 @@ qm set 9000 --machine pc --bios seabios --scsihw lsi --balloon 0 --cpu Westmere 
 | EBS schema `APPS` (and CM password) | `apps` |
 | EBS web `SYSADMIN` | `sysadmin` |
 | EBS web `OPERATIONS` / demo users | `welcome` |
-| DB SID | `VIS` |
-| Hostname | none baked in — set at first boot |
+| DB SID / listener service | **`EBSDB`** (confirmed) |
+| Hostname | **`ebs` / `ebs.example.com`** (baked in) |
 
 ## Stage 5 — First boot, network, verify EBS — `[~]` IN PROGRESS
 - [x] VM boots (after `--cpu Westmere`); console shows the appliance menu
@@ -215,18 +218,62 @@ qm set 9000 --machine pc --bios seabios --scsihw lsi --balloon 0 --cpu Westmere 
   - **APPL_TOP** = `/u01/install/APPS/apps/apps_st/appl`
   - root's shell has **no EBS env** yet (`$APPL_TOP`/`$ADMIN_SCRIPTS_HOME` empty)
   - `eth0` (e1000) DHCP → `192.168.100.223`
-- [ ] Set a **static IP `192.168.100.223`** (IP unchanged; keep hostname → no
-      Autoconfig needed) — *Option A manual chosen*
+- [x] Set a **static IP `192.168.100.223`** (Option A manual; keep hostname → no Autoconfig)
 - [x] Located the start/stop scripts:
   - DB: `/u01/install/VISION/scripts/startvisiondb.sh` / `stopvisiondb.sh`
+    → **must run as user `oracle`**; starts listener `EBSDB` + DB `EBSDB`
   - Apps: `/u01/install/APPS/scripts/startapps.sh` / `stopapps.sh`
+    → **must run as user `oracle`** (wrapper refuses other users); runs `adstrtal.sh`
   - also `/etc/init.d/apps` (service wrapper)
-  - (no `*.env` files at ≤4 levels; the wrapper scripts set the env themselves)
-- [ ] Start EBS: `startvisiondb.sh` then `startapps.sh` (DB first, then apps)
-- [ ] Verify: `lsnrctl status`, `adapcctl.sh status`, `adcmctl.sh status`,
-      `netstat -tlnp | grep -E '8000|1521'`
-- [ ] Login page loads: `http://192.168.100.223:8000/OA_HTML/AppsLogin` (try `SYSADMIN`/`sysadmin`)
+- [x] **DB started** — listener + DB `EBSDB` READY (`pmon_EBSDB` running), SGA ~1 GB
+- [x] **Apps started** — OPMN/OHS/OACORE/FORMS/OAFM + concurrent managers, `Fulfillment` on 9300; `adstrtal.sh` status 0
+- [x] Ports listening: **8000** (httpd) + **1521** (tnslsnr)
+- [!] Login page `http://192.168.100.223:8000/OA_HTML/AppsLogin` — **HTTP 500**
+      even on GET and via `ebs.example.com` (OC4J servlet error). See below.
 - [ ] **Change all default passwords**
+
+### Stage 5 blocker — login page HTTP 500 (servlet error)
+`curl` (GET) returns: *"Servlet error: An exception occurred. The current
+application deployment descriptors do not allow for including it in this
+response. Please consult the application log for details."*
+
+**Leading hypothesis:** the FND `.dbc` (JDBC config OACORE uses) still holds a
+**placeholder DB host**. Observed:
+```
+$INST_TOP/appl/fnd/12.0.0/secure/EBSDB.dbc   (mtime today 11:04)
+grep HOST ... -> "# DB_HOST ... DB_HOST=host_name"
+```
+i.e. the instance config looks **unconfigured for this host**. Note: OS/sqlplus
+connectivity works (concurrent managers started), so this is JDBC/config-specific.
+
+**Next commands (read-only, to confirm before changing anything):**
+```bash
+INST_TOP=/u01/install/APPS/inst/apps/EBSDB_ebs
+DBC=$INST_TOP/appl/fnd/12.0.0/secure/EBSDB.dbc
+grep -v '^#' "$DBC" | grep -v '^$'          # real DB/web host, port, SID, JDBC URL
+grep -iE 's_dbhost|s_dbport|s_dbSid|s_webhost|s_webport|s_hostname|s_domain' \
+  $INST_TOP/appl/admin/EBSDB_ebs.xml
+
+# locate real OACORE/Apache logs (guessed path was wrong)
+find $INST_TOP -name 'error_log' 2>/dev/null
+find $INST_TOP -name 'oc4j.log' 2>/dev/null
+find $INST_TOP -path '*oacore*' -name '*.log' 2>/dev/null | head
+
+# service status via AD scripts (opmnctl wrapper was broken)
+ADMIN_SCRIPTS_HOME=$INST_TOP/admin/scripts
+$ADMIN_SCRIPTS_HOME/adopmnctl.sh status
+$ADMIN_SCRIPTS_HOME/adoacorectl.sh status
+$ADMIN_SCRIPTS_HOME/adapcctl.sh status
+```
+
+**If the `.dbc` shows placeholders/wrong host** → regenerate the instance config:
+```bash
+sh /u01/install/scripts/configwebentry.sh      # appliance-supported (keeps host ebs.example.com)
+# or, as user oracle:
+$ADMIN_SCRIPTS_HOME/adautocfg.sh               # regenerates .dbc/config from the context file
+```
+Only do this once the `.dbc`/context confirms the values are wrong; otherwise
+follow the OACORE exception in the log.
 
 ## Stage 6 — Snapshot (MVP-A done) — `[ ]` TODO
 ```bash
@@ -282,3 +329,17 @@ qm listsnapshot 9000
   (UEK R3); `/u01/install/{APPS,oraInventory,scripts,VISION}`; helper scripts
   `configstatic.sh`, `configdhcp.sh`, `configwebentry.sh`, `configyum.sh`,
   `cleanup.sh`, `zeroout.sh`. Next: pin static IP + source EBS env and start.
+- **2026-10-02 (cont.)** — Static IP pinned (Option A). **EBS started:**
+  `startvisiondb.sh` (as `oracle`) → listener + DB **`EBSDB`** READY;
+  `startapps.sh` (as `oracle`) → `adstrtal.sh` status 0 (OPMN/OHS/OACORE/FORMS/
+  OAFM + concurrent managers). Ports **8000** and **1521** listening. Login page
+  `curl -I` (HEAD) returned **HTTP 500** — to confirm with GET/browser.
+  Corrected docs: DB SID/service is **`EBSDB`** (not VIS); start scripts must run
+  as **`oracle`**.
+- **2026-10-02 (cont.)** — Login page still **HTTP 500** on GET and via
+  `ebs.example.com`. OC4J servlet error; investigating. Leading hypothesis: FND
+  `.dbc` still has placeholder DB host (`DB_HOST=host_name`, mtime today 11:04) →
+  instance config not finalized. Added **"Stage 5 blocker"** section with the
+  read-only diagnostics and the likely fix (`configwebentry.sh` / `adautocfg.sh`).
+- **2026-10-02 (cont.)** — Session will be resumed on the **Proxmox host shell
+  (root)**. The repo (`AGENTS.md` + `PROGRESS.md`) is the durable handoff state.
