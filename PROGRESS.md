@@ -203,15 +203,26 @@ qm set 9000 --machine pc --bios seabios --scsihw lsi --balloon 0 --cpu Westmere 
 ## Stage 5 — First boot, network, verify EBS — `[~]` IN PROGRESS
 - [x] VM boots (after `--cpu Westmere`); console shows the appliance menu
       (`app` = manage start/stop, `reboot`, `none` = login to VM)
-- [x] Logged in as `root` (via `none`); discovered:
-  - hostname `ebs.example.com`
-  - `eth0` (e1000), **DHCP** → `192.168.100.223`; `ifcfg-eth0`: `BOOTPROTO=dhcp`
-  - `sshd` running / enabled
-  - SSH works from the Proxmox host with `-oHostKeyAlgorithms=+ssh-rsa`
-- [ ] Set a **static IP `192.168.100.223`** (keep hostname `ebs.example.com` to
-      avoid an Autoconfig reconfigure); ensure `/etc/hosts` maps the name
-- [ ] Confirm appliance paths: `ls /u01/install/ /u01/install/scripts/`
-- [ ] Start EBS via the `app` menu (or scripts)
+- [x] Logged in as `root` (via `none`); `sshd` running; SSH works with
+      `-oHostKeyAlgorithms=+ssh-rsa`
+- [x] Discovered the appliance layout:
+  - hostname short **`ebs`** / FQDN **`ebs.example.com`**; kernel **`3.8.13-35.el6uek` (UEK R3)**
+  - `/etc/hosts`: `192.168.100.223 ebs.example.com ebs` ✓
+  - `/u01/install/`: `APPS/  oraInventory/  scripts/  VISION/`
+  - `/u01/install/scripts/`: `cleanup.sh  configdhcp.sh  configstatic.sh
+    configwebentry.sh  configyum.sh  zeroout.sh`
+  - **DB ORACLE_HOME** = `/u01/install/VISION/db/tech_st/11.2.0`
+  - **APPL_TOP** = `/u01/install/APPS/apps/apps_st/appl`
+  - root's shell has **no EBS env** yet (`$APPL_TOP`/`$ADMIN_SCRIPTS_HOME` empty)
+  - `eth0` (e1000) DHCP → `192.168.100.223`
+- [ ] Set a **static IP `192.168.100.223`** (IP unchanged; keep hostname → no
+      Autoconfig needed) — *Option A manual chosen*
+- [x] Located the start/stop scripts:
+  - DB: `/u01/install/VISION/scripts/startvisiondb.sh` / `stopvisiondb.sh`
+  - Apps: `/u01/install/APPS/scripts/startapps.sh` / `stopapps.sh`
+  - also `/etc/init.d/apps` (service wrapper)
+  - (no `*.env` files at ≤4 levels; the wrapper scripts set the env themselves)
+- [ ] Start EBS: `startvisiondb.sh` then `startapps.sh` (DB first, then apps)
 - [ ] Verify: `lsnrctl status`, `adapcctl.sh status`, `adcmctl.sh status`,
       `netstat -tlnp | grep -E '8000|1521'`
 - [ ] Login page loads: `http://192.168.100.223:8000/OA_HTML/AppsLogin` (try `SYSADMIN`/`sysadmin`)
@@ -266,4 +277,8 @@ qm listsnapshot 9000
 - **2026-10-02 (cont.)** — **Stage 5 started.** Console menu (`none` logs in);
   hostname `ebs.example.com`; `eth0` DHCP `192.168.100.223`; `sshd` running.
   SSH works from the Proxmox host with `-oHostKeyAlgorithms=+ssh-rsa` (OL6 only
-  offers legacy host keys). Next: static IP + start EBS via the `app` menu.
+  offers legacy host keys).
+- **2026-10-02 (cont.)** — Appliance layout confirmed: kernel `3.8.13-35.el6uek`
+  (UEK R3); `/u01/install/{APPS,oraInventory,scripts,VISION}`; helper scripts
+  `configstatic.sh`, `configdhcp.sh`, `configwebentry.sh`, `configyum.sh`,
+  `cleanup.sh`, `zeroout.sh`. Next: pin static IP + source EBS env and start.
