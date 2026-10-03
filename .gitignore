@@ -1,0 +1,4 @@
+# Secrets — never commit these to git.
+.env
+*.env
+.env.*
