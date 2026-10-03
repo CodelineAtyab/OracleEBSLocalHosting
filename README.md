@@ -51,37 +51,126 @@ deliver paid client work.
 
 ## 2. Target architecture
 
-```
-                        Proxmox VE host (DL360, 188 GiB RAM / ~1.67 TiB)
-                                     |
-        vmbr1 (lab VLAN, e.g. 10.10.10.0/24), local DNS/hosts
-                                     |
-   +----------------+   +----------------------+   +---------------------------+
-   | Golden template|   | Shared class instance |   | Per-student EBS sandboxes |
-   | ebs1213-golden |   | ebs1213-class         |   | ebs1213-stu01 .. stu12    |
-   | (shut down,    |   | functional setups &   |   | Apps DBA practice:        |
-   |  snapshotted)  |   | navigation for many   |   | patching, autoconfig,     |
-   |                |   | students at once      |   | adadmin, cloning, RMAN    |
-   +----------------+   +----------------------+   +---------------------------+
-                                     |
-                   +---------------------------------------+
-                   | client-template 9200                  |
-                   | -> client-stu01..12 (linked clones)   |
-                   | OL7.9 + 32-bit FF ESR52 + 32-bit JRE8 |
-                   +---------------------------------------+
-                              -> students connect via noVNC (or SPICE)
+> GitHub renders the Mermaid diagram below. A plain-text ASCII version follows as a
+> fallback for viewers that don't render Mermaid.
 
-  ebs-staging (900, Debian 12/13) = temporary download/extract workspace, deleted after import
+```mermaid
+flowchart TB
+    subgraph HOST["Proxmox VE host — DL360 (40c/80t, 188 GiB RAM, ~1.67 TiB LVM-thin)"]
+        direction TB
+
+        subgraph STORE["local-lvm — LVM-thin pool 'data'"]
+            GOLDDISK[("Golden disk<br/>300 GiB virtual / ~243 GiB used<br/>shared base blocks for linked clones")]
+            SNAP["golden-clean snapshot<br/>rollback / reset point"]
+            GOLDDISK -.->|"Proxmox snapshot"| SNAP
+        end
+
+        GOLDEN["VM 9000 · ebs1213-golden<br/>R12.1.3 Vision (DB + app tier)<br/>STOPPED — never booted for class"]
+        STAGE["VM 900 · ebs-staging<br/>throwaway download/extract<br/>deleted after import"]
+        GOLDEN --- GOLDDISK
+
+        CLASS["VM 9010 · ebs1213-class<br/>shared functional instance<br/>one EBS user per student"]
+        EBSBOX["VMs 9101–9112 · ebs1213-stuNN<br/>per-student Apps DBA sandboxes"]
+        CTMPL["VM 9200 · client-template<br/>OL7.9 + 32-bit FF ESR52 + JRE 8"]
+        CLIENT["VMs 9201–9212 · client-stuNN<br/>Forms desktops (noVNC / SPICE)"]
+
+        GOLDEN ==>|"full clone"| CLASS
+        GOLDEN ==>|"linked clones (--full 0)"| EBSBOX
+        CTMPL ==>|"linked clones (--full 0)"| CLIENT
+        SNAP -.->|"rollback / re-clone to reset"| CLASS
+        SNAP -.->|"rollback / re-clone to reset"| EBSBOX
+    end
+
+    subgraph NET["Lab network — vmbr1 10.10.10.0/24 + local DNS / /etc/hosts"]
+        DNS["name resolution<br/>ebs.example.com → the right instance"]
+    end
+
+    subgraph WHO["Trainees (LAN-only, offline)"]
+        FUNC["Functional learner<br/>HTML in any browser"]
+        ADM["Apps DBA learner<br/>SSH / console → own sandbox"]
+        FORM["Forms learner<br/>client-VM desktop via noVNC"]
+    end
+
+    FUNC -->|"http :8000 (HTML)"| CLASS
+    FORM -->|"starts Forms applet"| CLIENT
+    CLIENT -->|"http :8000 / applet"| CLASS
+    ADM -->|"own sandbox"| EBSBOX
+    CLIENT -->|"Forms on own sandbox"| EBSBOX
+    DNS -.- CLASS
+    DNS -.- EBSBOX
+    DNS -.- CLIENT
+
+    classDef golden fill:#fff2cc,stroke:#d6b656,color:#000;
+    classDef classv fill:#d5e8d4,stroke:#82b366,color:#000;
+    classDef sandbox fill:#dae8fc,stroke:#6c8ebf,color:#000;
+    classDef client fill:#e1d5e7,stroke:#9673a6,color:#000;
+    classDef idle fill:#f5f5f5,stroke:#999,stroke-dasharray:4,color:#333;
+    class GOLDEN golden;
+    class CLASS classv;
+    class EBSBOX sandbox;
+    class CTMPL,CLIENT client;
+    class SNAP,STAGE idle;
 ```
 
-- **Golden template** — pristine, shut down, snapshotted. Never boot it for class.
-- **Shared class instance** — one instance, many EBS users/responsibilities.
-- **Per-student instances** — **linked clones** (qcow2 backing chain on dir/ZFS, or
-  LVM-thin snapshots) so the **300 GiB** base disk (~243 GiB actually used) is
-  shared and each clone adds only a small delta.
-- **Client VMs** — one per student (OL7.9 + 32-bit Firefox ESR52 + 32-bit Oracle
-  JRE 8) to run the Forms applet; accessed via noVNC or SPICE (§10).
-- **Staging VM** — throwaway; see `PLAN.md` §1.3.
+### How trainees connect
+- **Functional learning — browser only.** Trainees open `http://<class-host>:8000/`
+  in any normal browser and log in with **their own EBS username** on the shared
+  class instance. No client VM is needed for the HTML/OAF pages.
+- **Forms learning — client VM.** R12.1.3 Forms is a 32-bit Java applet. Each
+  trainee opens **their own client VM desktop** through **noVNC** in the Proxmox web
+  UI (or SPICE), then uses the bundled 32-bit Firefox ESR52 to launch Forms from the
+  EBS URL. This is the *only* reason the client VMs exist.
+- **Apps DBA learning — own sandbox.** Trainees get **SSH/console into their own EBS
+  sandbox clone** (`9101–9112`) and practise destructive admin safely.
+- **Names.** The lab VLAN + local DNS/`/etc/hosts` make the EBS hostname resolve to
+  the correct instance for each trainee (see §9 for the `vmbr1` vs unique-hostname
+  choice).
+
+### What each component is for
+| Component | VMID | What it is | Role in training |
+|-----------|------|------------|------------------|
+| **Golden base** | 9000 | Configured, password-changed R12.1.3 Vision (DB + app in one VM) | Source of truth for every clone; **stopped, never booted for class** |
+| **`golden-clean` snapshot** | — | Proxmox snapshot of 9000 on `local-lvm` | **Rollback / reset point** — wipe a cohort's changes or re-clone cleanly |
+| **Shared class instance** | 9010 | Full clone of 9000 | Functional practice for many trainees at once (one EBS user each); also the Forms target |
+| **Student EBS sandboxes** | 9101–9112 | Linked clones of 9000 | Per-trainee **Apps DBA**: start/stop, `adadmin`, `adpatch`, AutoConfig, concurrent managers, cloning, RMAN |
+| **Client template** | 9200 | OL7.9 + 32-bit Firefox ESR52 + 32-bit Oracle JRE 8 | Base image that can run the Forms applet |
+| **Client clones** | 9201–9212 | Linked clones of 9200 | Each trainee's Forms desktop, reached via noVNC / SPICE |
+| **Staging VM** | 900 | Throwaway Debian VM | Only downloads/extracts the appliance; delete after import |
+| **Lab VLAN / DNS** | `vmbr1` | 10.10.10.0/24 + local DNS / `/etc/hosts` | Isolation + name resolution so `ebs.example.com` points at the right instance |
+
+> The class instance and every sandbox are **full EBS installations** (their own DB
+> + app tier), so clones are independent. Disk is preserved by **linked clones**
+> (they share the golden base blocks); **RAM** is the constrained resource — cap how
+> many run at once (§2.1).
+
+### Plain-text fallback
+```
+Proxmox VE host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
+|
+|  local-lvm (thin pool "data")
+|    golden disk: 300 GiB virtual / ~243 GiB used
+|      `-- snapshot: golden-clean   (rollback/reset point; same pool)
+|           `-- shared base blocks for every linked clone
+|
+|  VM 9000  ebs1213-golden      [STOPPED -- never booted for class]
+|     |-- full clone -------->   VM 9010  ebs1213-class   (functional, shared)
+|     `-- linked clones ----->   VMs 9101-9112  ebs1213-stuNN  (Apps DBA each)
+|
+|  VM 9200  client-template     (OL7.9 + 32-bit FF ESR52 + 32-bit Oracle JRE 8)
+|     `-- linked clones ----->   VMs 9201-9212  client-stuNN  (Forms desktops)
+|
+`  VM 900   ebs-staging         (throwaway; delete after import)
+                     |
+         vmbr1 lab VLAN (10.10.10.0/24) + local DNS / /etc/hosts
+                     |
+   +-----------------+------------------+---------------------+
+   |                 |                  |                     |
+ Functional        Forms learner      Apps DBA learner      (offline / LAN only)
+ learner:          (client VM,        (SSH/console ->
+ browser -> :8000  noVNC or SPICE)    own sandbox)
+   |                 |                  |
+   +--> VM 9010 ebs1213-class (shared) <-- Forms applet from client VMs
+```
 
 ### Resource budget (host: 188 GiB RAM, ~1.67 TiB)
 

@@ -426,3 +426,9 @@ destroy + re-clone.
   per student; per-student Apps DBA + client VMs; the clone **hostname/AutoConfig**
   networking caveat; learning tracks) in "Post-MVP — student access model" above
   and in `README.md` §9.
+- **2026-10-03 (cont.)** — **`README.md` §2 architecture refreshed:** added a
+  **Mermaid `flowchart`** (GitHub-rendered) above a rewritten ASCII fallback,
+  showing the Proxmox host, the `local-lvm` thin pool + `golden-clean` snapshot,
+  the golden VM → class/sandbox/client clones, the `vmbr1` network, and the three
+  trainee access paths; plus "How trainees connect" and a "What each component is
+  for" table.
