@@ -52,7 +52,10 @@ Simple defaults to adopt now:
 
 ### Deferred until after the MVP (optimise later)
 - Shared class instance + 12 linked EBS clones (`--full 0`) and clone tuning.
+  **Built 2026-10-03:** class `9010` + sandboxes `9101–9105` live (**5 of 12**);
+  scaling to 12 pending.
 - Per-student client VMs (build the client template 9200 → clones 9201–9212, §1.4).
+  **Built 2026-10-03:** template `9200` + clones `9201–9205` (**5 of 12**).
 - Optional **JWS migration** on 12.1.3 (server-side patches) — not needed for the
   chosen legacy-applet client.
 - LXC/Docker helper services (file server, DNS) and Ansible automation.
@@ -71,7 +74,7 @@ the other three are effectively fixed by what Oracle ships.
 | Proxmox host | **Proxmox VE 9.x** (Debian 13 base) — installed as 9.2.20 | PVE 8.x / 7.x fallback | PVE 8/9 need CPU x86-64-v2; the host's Gold 6138 passes. |
 | EBS guest | **Oracle Linux 6.5 x86-64** (what the appliance ships) | none (do NOT change) | Fixed by Oracle's pre-built appliance. Do not upgrade/replace — it breaks Autoconfig/EBS. |
 | Staging / helper VM | **Debian 12/13 minimal** | Oracle Linux 8/9 minimal; or run on the host | Only needs `wget`, `unzip`, `tar`, and lots of disk. Small + free + still-supported. |
-| Student client VM | **Oracle Linux 7.9 + 32-bit Firefox ESR 52 + 32-bit Oracle JRE 8** (one VM per student, legacy applet) | Windows/macOS + JRE 8 + JWS (certified); OpenJDK 8 + IcedTea-Web (free, less proven) | **Decided 2026-09-29.** Uncapped $0; uncertified Linux config. Access via noVNC (default) or SPICE. See §1.4. |
+| Student client VM | **Oracle Linux 7.9 + Xfce + Firefox ESR 52 (x86_64) + OpenJDK 8 + IcedTea-Web** (one VM per student, legacy applet) | Windows/macOS + Oracle JRE 8 + JWS (certified); 32-bit Oracle JRE 8 (fallback) | **Decided 2026-09-29; stack updated 2026-10-03** (free/no-Oracle-login). Uncapped $0; uncertified Linux config. Access via noVNC (default) or SPICE. See §1.4. |
 
 ### 1.1 Proxmox host OS
 - **Keep Proxmox VE as installed.** Do not re-install a plain Debian/other
@@ -123,7 +126,10 @@ root/local dirs were too small. See `PROGRESS.md` for exact state.
   exports** (NFS/9p, e.g. `/srv/ebs-media`); mount it in the VM and stage there —
   no second copy, and the host imports directly. If you instead put ~300 GB on the
   VM's own disk, you must `scp`/`rsync` the final `.ovf`+`.vmdk` back to the host.
-- **Delete** the VM and its media after the golden disk is imported.
+- **Retired 2026-10-03:** the staging VM (`900`) and its NFS export were removed
+  after import; the 300 GiB thin LV `/dev/pve/ebs-staging` (mounted at
+  `/srv/ebs-media`) is **kept**, holding only the pristine `disk1.vmdk` + `.ovf`
+  (see `AGENTS.md` "Staging VM").
 
 > Rejected: staging directly on the host (works, but the user chose VM isolation).
 
@@ -133,34 +139,30 @@ R12.1.3 Forms runs as a **Java applet**. The chosen route is the **legacy NPAPI
 applet** served by a dedicated per-student client VM, so the **stock appliance
 needs no server patching** (unlike JWS).
 
-**Locked build (every artifact verified obtainable, $0):**
-- OS: **Oracle Linux 7.9 (64-bit)** — ISO still freely downloadable from
-  yum.oracle.com. OL7 is EOL (Extended Support to Jun 2028, paid — irrelevant
-  offline). i686 multilib packages ARE present in OL7's x86_64 repo.
-- Browser: **32-bit Firefox ESR 52.9.0esr** (Mozilla archive `linux-i686`) — the
-  last NPAPI-capable Firefox.
-- Runtime: **32-bit Oracle JRE 8** (`linux-i586`) — the only runtime shipping
-  `libnpjp2.so`. Needs a free Oracle account + licence click; fine for
-  non-commercial/self-study.
-- Wiring: `ln -s <jre>/lib/i386/libnpjp2.so ~/.mozilla/plugins/`, verify in
-  `about:plugins`.
-- Access: **noVNC in-browser by default** (zero student install; Proxmox user
-  with `VM.Console`), **SPICE optional** (`vga: qxl` + `virt-viewer`). **RDP is
-  rejected** — xrdp is unavailable on OL7 (EPEL 7 EOL).
-- Desktop: **minimal install + a light DE (Xfce/LXQt)**, not full GNOME, so each
-  client VM stays low on RAM/CPU. (Recommendation — confirm at build.)
+**Build — BUILT 2026-10-03 (free path):**
+- OS: **Oracle Linux 7.9 (64-bit)** — ISO free from yum.oracle.com (OL7 EOL; offline-only).
+- Browser: **Firefox ESR 52.9.0esr (x86_64)** (Mozilla archive) — last NPAPI Firefox.
+- Runtime + plugin: **OpenJDK 8 (x86_64) + IcedTea-Web 1.7.1** —
+  `/usr/lib64/IcedTeaPlugin.so`; **arch must match the browser**, so the stack is
+  64-bit. Avoids the Oracle login. **Fallback:** 32-bit Oracle JRE 8
+  (`linux-i586`, `libnpjp2.so`) + 32-bit Firefox.
+- Wiring: symlink the plugin into `/usr/lib64/mozilla/plugins`,
+  `/opt/firefox/plugins`, `~/.mozilla/plugins`; `plugin.load_flash_only=false`;
+  verify in `about:plugins`; add the EBS URL to `/etc/icedtea-web/exception.sites`.
+- Desktop: **Xfce** (archived EPEL 7) + **lightdm autologin**, light for 2 GB.
+- Access: **noVNC in-browser by default** (Proxmox user with `VM.Console`),
+  **SPICE optional** (`vga: qxl` + `virt-viewer`). **RDP rejected** — xrdp not on OL7.
 
 **Verified caveats (see `RESEARCH.md` §7):**
-- **Community/uncertified Linux config** — Oracle certifies the FF-ESR52 + JRE8
-  plugin path on **Windows only** (MOS 389422.1 / 393931.1).
-- Expect JRE security friction: add the EBS URL to the **Exception Site List**,
-  allow unsigned/SHA-1 JARs (`deployment.security.level`), possibly set
-  `plugin.load_flash_only=false`, and disable Firefox auto-update.
+- **Community/uncertified Linux config** — Oracle certifies the FF-ESR52 + Oracle
+  JRE plugin path on **Windows only** (MOS 389422.1 / 393931.1).
+- Expect plugin security friction: add the EBS URL to the exception site, allow
+  unsigned/SHA-1 JARs, set `plugin.load_flash_only=false`, disable Firefox auto-update.
 - No security updates on any component — offline lab only.
 
-**Alternatives considered:** JWS on 12.1.3 (needs server patches — deferred, not
-chosen); Windows client (licensed); OpenJDK 8 + IcedTea-Web (uncertified;
-OpenWebStart can't run applet-style JNLP).
+**Alternatives considered:** JWS on 12.1.3 (needs server patches — deferred); Windows
+client (licensed). The free **OpenJDK 8 + IcedTea-Web** route was **chosen 2026-10-03**
+(no Oracle login).
 
 > Per-student client VMs (template **9200** → clones **9201–9212**) sized
 > **2 vCPU / 2 GB / 20–40 GB**. Mind the **~188 GiB RAM budget** (see §2.1).
@@ -179,16 +181,17 @@ OpenWebStart can't run applet-style JNLP).
 |------|------|-----|------|-------|
 | Proxmox host | — | ~2–4 GB | — | Reserve headroom for host |
 | Staging/helper VM (temporary) | 2 | 2–4 GB | ~32 GB (staging on host share) | Delete after import |
-| EBS appliance (golden) | 4 | 12 GB | **300 GiB thin** (VMDK virtual size) | Shut down after snapshot |
+| EBS appliance (golden) | 4 | 12 GB | **300 GiB thin** (VMDK virtual size) | `qm template` (no snapshot) |
 | Shared class instance | 4 | 12 GB | clone | `--full 1` |
-| 12 × student EBS clones | 4 each | 10 GB each | linked deltas | `--full 0` |
-| Client template | 2 | 2 GB | 20–40 GB | OL7.9 + FF ESR52 + JRE 8 |
-| 12 × client clones | 2 each | 2 GB each | linked deltas | `--full 0` |
+| 12 × student EBS clones | 4 each | 12 GB each | linked deltas | `--full 0` (5 built) |
+| Client template | 2 | 2 GB | 30 GB | OL7.9 + FF ESR52 + OpenJDK8/IcedTea-Web |
+| 12 × client clones | 2 each | 2 GB each | linked deltas | `--full 0` (5 built) |
 
-RAM check: 12×10 (EBS) + 12 (class) + 12×2 (clients) ≈ **156 GB of ~188 GiB**
-(~24 GB host headroom). **Tight:** running all 12 EBS sandboxes + 12 clients +
-class at once nearly fills RAM — cap concurrent sandboxes (e.g. ~8) or accept
-swap risk. Clients at 4 GB each would not fit; keep them at **2 GB**.
+RAM check: 12×12 (EBS) + 12 (class) + 12×2 (clients) ≈ **180 GB of ~188 GiB**
+(~8 GB host headroom). **Very tight:** running all 12 EBS sandboxes + 12 clients +
+class at once fills RAM — cap concurrent sandboxes (e.g. ~5–8) or accept swap
+risk. Clients at 4 GB each would not fit; keep them at **2 GB**. (As built
+2026-10-03: 6 EBS instances + 5 clients run in ~45 GiB.)
 Storage check: the golden disk is 300 GiB *virtual* and actually maps **~243 GiB**
 (Vision DB filesystem). A full clone (class) duplicates that ~243 GiB; linked
 clones share it and store only deltas. So base + class ≈ **~0.5 TiB**, leaving
@@ -202,9 +205,9 @@ clones are linked** — do not full-clone.
 | EBS 12.1.3 Vision Virtual Appliance (multi-part) | edelivery.oracle.com | tens of GB (**confirm in readme**) | Oracle SSO (free) |
 | **Oracle Linux 7.9** x86_64 DVD ISO (client template) | yum.oracle.com | ~4 GB | none (free) |
 | Debian 12/13 netinst (staging VM) | debian.org | ~0.6 GB | none |
-| Firefox 52.9.0esr **32-bit** tarball — `linux-i686` | archive.mozilla.org | ~60 MB | none |
-| 32-bit Oracle JRE 8 (`linux-i586`, has `libnpjp2.so`) | Java SE 8 archive (oracle.com) | ~70–80 MB | Oracle SSO + licence click |
-| OpenJDK 8 + IcedTea-Web / OpenWebStart — JWS only, uncertified | distro repo / GitHub | small | none |
+| Firefox 52.9.0esr **x86_64** tarball | archive.mozilla.org | ~56 MB | none |
+| OpenJDK 8 + IcedTea-Web (NPAPI plugin) | OL7 repo / archived EPEL 7 | small | none |
+| *(Fallback)* 32-bit Oracle JRE 8 (`linux-i586`, `libnpjp2.so`) | Java SE 8 archive | ~70–80 MB | Oracle SSO + licence click |
 
 ### 2.3 Reused / no-cost assets
 - Proxmox VE (already installed), the DL360 itself, local DNS/`/etc/hosts`.
@@ -247,17 +250,19 @@ Steps: unzip parts → concatenate → `tar xf` the OVA → get `.ovf` + `.vmdk`
   part; confirm the exact part naming (`.part*` vs `.0xx`) from the readme.
 
 ### Phase 3 — Import into Proxmox and create the VM (`README.md` §6)
-Steps: `qm create 9000` (i440fx/SeaBIOS/LSI, **`--cpu Westmere`** — `host` panics
+Steps: `qm create 9000` (i440fx/SeaBIOS, **`--cpu Westmere`** — `host` panics
 the OL6 UEK kernel, `--balloon 0`, `e1000` NIC) → **`qm importdisk`** the VMDK →
-`qm set --scsi0` → boot order. (`qm importovf` is an alternative that creates the
+`qm set --sata0` → boot order. (`qm importovf` is an alternative that creates the
 VM itself — don't also run `qm create`.)
-- **Verify:** `qm config 9000` → machine `pc`, bios `seabios`, scsihw `lsi`,
+- **Use SATA (`sata0`), not LSI SCSI:** the guest's `sym53c8xx` driver panics under
+  KVM (`sym_int_sir`, "Fatal exception in interrupt") under I/O — verified 2026-10-03.
+- **Verify:** `qm config 9000` → machine `pc`, bios `seabios`, **`sata0`**,
   `e1000`/`virtio` NIC on the chosen bridge, `balloon: 0`.
-- **Verify:** `lvs` / `qm config 9000` → `scsi0` points at the imported disk.
+- **Verify:** `lvs` / `qm config 9000` → `sata0` points at the imported disk.
 - **Verify:** disk is thin and matches the VMDK's **300 GiB virtual size** (do
   not shrink below it).
-- **If it fails:** "no bootable disk" → wrong controller (must be LSI SCSI or
-  SATA, not virtio-scsi) or wrong boot order; `--format qcow2` errors on
+- **If it fails:** "no bootable disk" → wrong controller (use **SATA**, not
+  LSI/virtio-scsi) or wrong boot order; `--format qcow2` errors on
   LVM-thin → drop it or use `dir`/ZFS storage.
 
 ### Phase 4 — First boot, network reconfigure, verification (`README.md` §7)
@@ -296,12 +301,12 @@ client template** then 12 linked client clones (9201–9212).
 
 ### Phase 7 — Client access (Forms applet) (`README.md` §10)
 Decided: **one Oracle Linux 7.9 client VM per student**, built from the client
-template, running the legacy applet stack (**32-bit Firefox ESR52 + 32-bit Oracle
-JRE 8 plugin**). Access via **noVNC in-browser** (default) or **SPICE**. For
-**MVP-A this phase is skipped entirely** — validate the HTML login page from an
-existing PC.
-- **Verify:** `java -version` → 1.8.0_x (32-bit) on the client.
-- **Verify:** `about:plugins` in **32-bit** Firefox 52 lists the Java plugin.
+template, running the legacy applet stack (**Firefox ESR52 x64 + OpenJDK 8 +
+IcedTea-Web**; Oracle JRE 8 fallback). Access via **noVNC in-browser** (default) or
+**SPICE**. For **MVP-A this phase is skipped entirely** — validate the HTML login
+page from an existing PC.
+- **Verify:** `java -version` → 1.8.0_x (x86_64) on the client.
+- **Verify:** `about:plugins` in Firefox 52 lists the **IcedTea-Web** plugin (Enabled).
 - **Verify:** open the EBS login page and launch at least one Forms screen.
 - **Verify:** a student can reach their own client VM console (noVNC) and no
   other's (Proxmox `VM.Console` scoping).
@@ -324,7 +329,8 @@ Steps: publish tracks; between cohorts roll back or re-clone.
 > 12.2.12, concurrency, HDD bottleneck, decision record). Read it before changing
 > the platform decision.
 
-1. ~~Thin-client method~~ — **DECIDED:** legacy 32-bit applet on a per-student
+1. ~~Thin-client method~~ — **DECIDED:** legacy applet (free **64-bit OpenJDK 8 +
+   IcedTea-Web**; Oracle JRE fallback) on a per-student
    Oracle Linux 7.9 client VM (no server patching). See §1.4 / `RESEARCH.md` §7.
 2. ~~Staging location~~ — **DECIDED:** dedicated `ebs-staging` VM (Debian 12/13), see
    §1.3. Media exposed to the host for import.
@@ -379,8 +385,9 @@ login-gated and were confirmed only indirectly where noted.
   needs server-side patches + `s_forms_launch_method=jws`.
   <https://blogs.oracle.com/ebstech/java-web-start-now-available-for-ebs-121-and-122>
 - **H** Oracle certifies **no Linux desktop** client; only Windows/macOS/Android
-  (MOS 389422.1). The NPAPI plugin exists **only in Oracle JRE**, and only the
-  **32-bit** Firefox **ESR 52** keeps NPAPI.
+  (MOS 389422.1). The Oracle NPAPI plugin (`libnpjp2.so`) ships only with **Oracle
+  JRE**; the free alternative is **IcedTea-Web** (NPAPI plugin for OpenJDK). Firefox
+  **ESR 52** is the last NPAPI Firefox (either x86_64 or i686).
   <https://blogs.oracle.com/ebstech/confused-about-e-business-server-vs-desktop-operating-system-certifications>
 - **H** Proxmox: disk-bus/BIOS must match the source; VirtIO is preferred but
   not for OSes lacking drivers. `--format qcow2` is meaningless on LVM-thin.
@@ -408,8 +415,9 @@ login-gated and were confirmed only indirectly where noted.
 3. Appliance env path `/u01/install/APPS/APPS<CONTEXT>.env` was the 12.2 layout →
    corrected to `/u01/install/VISION` + `$APPL_TOP/APPS<CONTEXT>.env`.
 4. "JWS removes the client problem" was overstated → JWS on 12.1.3 needs server
-   patches; Linux clients are uncertified; the applet plugin needs 32-bit
-   Firefox ESR 52 + 32-bit **Oracle** JRE 8.
+   patches; Linux clients are uncertified. *(2026-10-03: the client was built with
+   **64-bit Firefox ESR52 + OpenJDK 8 + IcedTea-Web**; the original 32-bit Oracle
+   JRE 8 plan is the fallback.)*
 5. Added the 2013-Xen-template warning and the `--balloon 0` / `e1000` tweaks.
 6. **`--cpu host` panics the OL6 UEK kernel** (`dtrace_psinfo_alloc` during
    `execve`) → use **`--cpu Westmere`** (verified working 2026-10-02). Applies to

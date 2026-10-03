@@ -8,6 +8,12 @@ The goal is upskilling: give each student (and each new cohort) a working EBS
 environment to practise on — functional navigation and setups, plus Apps DBA
 work (patching, Autoconfig, cloning, admin utilities, DB administration).
 
+> **Status (2026-10-03): live.** Golden `9000` is a Proxmox **template**; the
+> shared class `9010` (`.223`) and five Apps-DBA sandboxes `9101–9105`
+> (`.231–.235`) run EBS 12.1.3 (`302`); five Forms client VMs `9201–9205` run the
+> legacy applet; Proxmox users `stu01–stu05@pve` get scoped **noVNC** access.
+> Live state: `PROGRESS.md`.
+
 ---
 
 ## 1. Context and constraints
@@ -56,49 +62,50 @@ deliver paid client work.
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Proxmox VE host — DL360 (40c/80t, 188 GiB RAM, ~1.67 TiB LVM-thin)"]
+    subgraph HOST["Proxmox VE 9.2.20 host — DL360 (40c/80t, 188 GiB RAM, ~1.67 TiB LVM-thin)"]
         direction TB
 
-        subgraph STORE["local-lvm — LVM-thin pool 'data'"]
-            GOLDDISK[("Golden disk<br/>300 GiB virtual / ~243 GiB used<br/>shared base blocks for linked clones")]
-            SNAP["golden-clean snapshot<br/>rollback / reset point"]
-            GOLDDISK -.->|"Proxmox snapshot"| SNAP
+        subgraph STORE["local-lvm — LVM-thin pool"]
+            GOLDDISK[("Golden disk<br/>300 GiB virtual / ~243 GiB used<br/>shared base blocks for every linked clone")]
         end
 
-        GOLDEN["VM 9000 · ebs1213-golden<br/>R12.1.3 Vision (DB + app tier)<br/>STOPPED — never booted for class"]
-        STAGE["VM 900 · ebs-staging<br/>throwaway download/extract<br/>deleted after import"]
+        GOLDEN["VM 9000 · ebs1213-golden<br/>R12.1.3 Vision (DB + app tier)<br/>TEMPLATE — stopped, never booted for class"]
         GOLDEN --- GOLDDISK
 
-        CLASS["VM 9010 · ebs1213-class<br/>shared functional instance<br/>one EBS user per student"]
-        EBSBOX["VMs 9101–9112 · ebs1213-stuNN<br/>per-student Apps DBA sandboxes"]
-        CTMPL["VM 9200 · client-template<br/>OL7.9 + 32-bit FF ESR52 + JRE 8"]
-        CLIENT["VMs 9201–9212 · client-stuNN<br/>Forms desktops (noVNC / SPICE)"]
+        CLASS["VM 9010 · ebs1213-class · 192.168.100.223<br/>full clone — shared functional instance"]
+        EBSBOX["VMs 9101–9105 · ebs1213-stuNN · .231–.235<br/>linked clones (→ 9112 planned)<br/>per-student Apps DBA sandboxes"]
+        CTMPL["VM 9200 · client-template<br/>OL7.9 + Xfce + FF ESR52 x64<br/>+ OpenJDK 8 / IcedTea-Web"]
+        CLIENT["VMs 9201–9205 · client-stuNN · DHCP (.226–.230)<br/>linked clones (→ 9212 planned)<br/>Forms desktops via noVNC / SPICE"]
 
         GOLDEN ==>|"full clone"| CLASS
         GOLDEN ==>|"linked clones (--full 0)"| EBSBOX
         CTMPL ==>|"linked clones (--full 0)"| CLIENT
-        SNAP -.->|"rollback / re-clone to reset"| CLASS
-        SNAP -.->|"rollback / re-clone to reset"| EBSBOX
     end
 
-    subgraph NET["Lab network — vmbr1 10.10.10.0/24 + local DNS / /etc/hosts"]
-        DNS["name resolution<br/>ebs.example.com → the right instance"]
+    subgraph NET["Lab network — vmbr0 192.168.100.0/24 (no VLAN yet)"]
+        IPADDR["EBS VMs on static IPs + /etc/hosts<br/>clients on DHCP"]
     end
 
-    subgraph WHO["Trainees (LAN-only, offline)"]
+    subgraph PVEUI["Proxmox web UI (https :8006)"]
+        USERS["users stu01–stu05@pve<br/>role PVEVMUser on their own 2 VMs"]
+    end
+
+    subgraph WHO["5 trainees (LAN-only, offline)"]
         FUNC["Functional learner<br/>HTML in any browser"]
         ADM["Apps DBA learner<br/>SSH / console → own sandbox"]
         FORM["Forms learner<br/>client-VM desktop via noVNC"]
     end
 
     FUNC -->|"http :8000 (HTML)"| CLASS
-    FORM -->|"starts Forms applet"| CLIENT
+    FORM -->|"noVNC / SPICE"| CLIENT
     CLIENT -->|"http :8000 / applet"| CLASS
     ADM -->|"own sandbox"| EBSBOX
     CLIENT -->|"Forms on own sandbox"| EBSBOX
-    DNS -.- CLASS
-    DNS -.- EBSBOX
-    DNS -.- CLIENT
+    USERS -.->|"console access"| CLIENT
+    USERS -.->|"console access"| EBSBOX
+    IPADDR -.- CLASS
+    IPADDR -.- EBSBOX
+    IPADDR -.- CLIENT
 
     classDef golden fill:#fff2cc,stroke:#d6b656,color:#000;
     classDef classv fill:#d5e8d4,stroke:#82b366,color:#000;
@@ -109,34 +116,36 @@ flowchart TB
     class CLASS classv;
     class EBSBOX sandbox;
     class CTMPL,CLIENT client;
-    class SNAP,STAGE idle;
+    class IPADDR,USERS idle;
 ```
 
 ### How trainees connect
 - **Functional learning — browser only.** Trainees open `http://<class-host>:8000/`
   in any normal browser and log in with **their own EBS username** on the shared
   class instance. No client VM is needed for the HTML/OAF pages.
-- **Forms learning — client VM.** R12.1.3 Forms is a 32-bit Java applet. Each
-  trainee opens **their own client VM desktop** through **noVNC** in the Proxmox web
-  UI (or SPICE), then uses the bundled 32-bit Firefox ESR52 to launch Forms from the
+- **Forms learning — client VM.** R12.1.3 Forms is a Java applet. Each trainee opens
+  **their own client VM desktop** through **noVNC** in the Proxmox web UI (or SPICE),
+  then uses the bundled Firefox ESR52 + Java (IcedTea-Web) to launch Forms from the
   EBS URL. This is the *only* reason the client VMs exist.
 - **Apps DBA learning — own sandbox.** Trainees get **SSH/console into their own EBS
-  sandbox clone** (`9101–9112`) and practise destructive admin safely.
-- **Names.** The lab VLAN + local DNS/`/etc/hosts` make the EBS hostname resolve to
-  the correct instance for each trainee (see §9 for the `vmbr1` vs unique-hostname
-  choice).
+  sandbox clone** (`9101–9105`, expanding to 9112) and practise destructive admin safely.
+- **Names.** Each EBS clone keeps the hostname `ebs.example.com` but gets a **unique
+  static IP**, and each guest's `/etc/hosts` maps that name to its own IP — so no
+  per-clone AutoConfig is needed. (An isolated `vmbr1` VLAN + local DNS remains an
+  optional future refinement; see §9.)
 
 ### What each component is for
 | Component | VMID | What it is | Role in training |
 |-----------|------|------------|------------------|
-| **Golden base** | 9000 | Configured, password-changed R12.1.3 Vision (DB + app in one VM) | Source of truth for every clone; **stopped, never booted for class** |
-| **`golden-clean` snapshot** | — | Proxmox snapshot of 9000 on `local-lvm` | **Rollback / reset point** — wipe a cohort's changes or re-clone cleanly |
-| **Shared class instance** | 9010 | Full clone of 9000 | Functional practice for many trainees at once (one EBS user each); also the Forms target |
-| **Student EBS sandboxes** | 9101–9112 | Linked clones of 9000 | Per-trainee **Apps DBA**: start/stop, `adadmin`, `adpatch`, AutoConfig, concurrent managers, cloning, RMAN |
-| **Client template** | 9200 | OL7.9 + 32-bit Firefox ESR52 + 32-bit Oracle JRE 8 | Base image that can run the Forms applet |
-| **Client clones** | 9201–9212 | Linked clones of 9200 | Each trainee's Forms desktop, reached via noVNC / SPICE |
-| **Staging VM** | 900 | Throwaway Debian VM | Only downloads/extracts the appliance; delete after import |
-| **Lab VLAN / DNS** | `vmbr1` | 10.10.10.0/24 + local DNS / `/etc/hosts` | Isolation + name resolution so `ebs.example.com` points at the right instance |
+| **Golden base** | 9000 | Configured, password-changed R12.1.3 Vision (DB + app in one VM) | Source of truth for every clone; **`qm template` — stopped, never booted for class** |
+| **Reset by re-clone** | — | Delete a clone and re-clone from the template (`--full 0`) | Wipes a cohort's changes; cheap because clones are linked (a template cannot hold snapshots) |
+| **Shared class instance** | 9010 | Full clone of 9000 · **static `192.168.100.223`** | Functional practice for students at once (one EBS user each); also the Forms target |
+| **Student EBS sandboxes** | 9101–9105 (→9112) | Linked clones of 9000 · **static `.231–.235`** | Per-student **Apps DBA**: start/stop, `adadmin`, `adpatch`, AutoConfig, concurrent managers, cloning, RMAN |
+| **Client template** | 9200 | OL7.9 + Xfce + Firefox ESR52 x64 + OpenJDK 8 + IcedTea-Web | Base image that runs the Forms applet |
+| **Client clones** | 9201–9205 (→9212) | Linked clones of 9200 · DHCP | Each student's Forms desktop, reached via noVNC / SPICE |
+| **Proxmox student users** | — | `stu01–stu05@pve`, role `PVEVMUser` on their client + sandbox | Scoped noVNC console/power access to their own two VMs only |
+| **Staging VM** | — | Debian VM **retired 2026-10-03** (media kept on `/srv/ebs-media`) | Only downloaded/extracted the appliance; no longer present |
+| **Lab network** | `vmbr0` | 192.168.100.0/24 — EBS static IPs + `/etc/hosts`; clients DHCP | Name resolution via `/etc/hosts` (`ebs.example.com` → class). Isolated `vmbr1` VLAN still planned |
 
 > The class instance and every sandbox are **full EBS installations** (their own DB
 > + app tier), so clones are independent. Disk is preserved by **linked clones**
@@ -145,24 +154,27 @@ flowchart TB
 
 ### Plain-text fallback
 ```
-Proxmox VE host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
+Proxmox VE 9.2.20 host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 |
-|  local-lvm (thin pool "data")
+|  local-lvm (thin pool)
 |    golden disk: 300 GiB virtual / ~243 GiB used
-|      `-- snapshot: golden-clean   (rollback/reset point; same pool)
-|           `-- shared base blocks for every linked clone
+|      `-- shared base blocks for every linked clone
 |
-|  VM 9000  ebs1213-golden      [STOPPED -- never booted for class]
-|     |-- full clone -------->   VM 9010  ebs1213-class   (functional, shared)
-|     `-- linked clones ----->   VMs 9101-9112  ebs1213-stuNN  (Apps DBA each)
+|  VM 9000  ebs1213-golden   [TEMPLATE -- stopped, never booted for class]
+|     |-- full clone -------->   VM 9010  ebs1213-class  .223   (functional, shared)
+|     `-- linked clones ----->   VMs 9101-9105  ebs1213-stuNN  .231-.235  (Apps DBA each)
+|                                (target: stu06-12 -> 9106-9112)
 |
-|  VM 9200  client-template     (OL7.9 + 32-bit FF ESR52 + 32-bit Oracle JRE 8)
-|     `-- linked clones ----->   VMs 9201-9212  client-stuNN  (Forms desktops)
+|  VM 9200  client-template  (OL7.9 + Xfce + FF ESR52 x64 + OpenJDK8/IcedTea-Web)
+|     `-- linked clones ----->   VMs 9201-9205  client-stuNN  DHCP .226-.230  (Forms desktops)
+|                                (target: stu06-12 -> 9206-9212)
 |
-`  VM 900   ebs-staging         (throwaway; delete after import)
-                     |
-         vmbr1 lab VLAN (10.10.10.0/24) + local DNS / /etc/hosts
-                     |
+`  network: vmbr0 192.168.100.0/24  -- EBS static IPs + /etc/hosts; clients DHCP
+             (isolated vmbr1 lab VLAN still planned, not built)
+                       |
+      Proxmox web UI (:8006) --> noVNC console
+      users stu01-stu05@pve (role PVEVMUser, scoped to their own 2 VMs)
+                       |
    +-----------------+------------------+---------------------+
    |                 |                  |                     |
  Functional        Forms learner      Apps DBA learner      (offline / LAN only)
@@ -178,14 +190,14 @@ Proxmox VE host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 |------|------|-----|------|
 | EBS appliance (golden) | 4 | 12 GB | **300 GiB thin** (VMDK virtual size) |
 | Shared class instance | 4 | 12 GB | clone |
-| 12 × student EBS clones | 4 each | 10 GB each | linked deltas |
-| Client template | 2 | 2 GB | 20–40 GB |
+| 12 × student EBS clones | 4 each | 12 GB each | linked deltas |
+| Client template | 2 | 2 GB | 30 GB |
 | 12 × client clones | 2 each | 2 GB each | linked deltas |
 
-RAM: 12×10 + 12 + 12×2 = **~156 GB of ~188 GiB** — workable but **tight**; cap how
-many EBS sandboxes run at once. Storage: golden ~300 GiB + class full clone + deltas
-≈ **800–900 GiB of 1.67 TiB**, and only fits because clones are linked. Full detail:
-`PLAN.md` §2.1.
+RAM: 12×12 + 12 + 12×2 = **~180 GB of ~188 GiB** — very tight; **cap how many EBS
+sandboxes run at once** (5 sandboxes + class + clients currently use ~45 GiB).
+Storage: golden ~300 GiB + class full clone + deltas ≈ **800–900 GiB of 1.67 TiB**,
+and only fits because clones are linked. Full detail: `PLAN.md` §2.1.
 
 ---
 
@@ -262,6 +274,12 @@ vCPU, 2–4 GB RAM, ~32 GB OS disk + ~300 GB host-shared staging space) — not 
 the host. Stage on a folder the host can later read for import (host NFS/9p
 share, e.g. `/srv/ebs-media`). See `PLAN.md` §1.3.
 
+> **Retired 2026-10-03 (this build):** the `ebs-staging` VM and its NFS export
+> were removed after import. The 300 GiB thin LV `/dev/pve/ebs-staging`
+> (`/srv/ebs-media`) is **kept**, holding only the pristine `disk1.vmdk` + `.ovf`,
+> so the appliance can be re-imported without re-downloading (`AGENTS.md`). Only
+> redo this section if you need to stage a fresh download.
+
 ```bash
 cd /srv/ebs-media           # or wherever the shared staging folder is mounted
 # 1) Unzip all parts
@@ -284,8 +302,10 @@ ls -lh *.ovf *.vmdk
 
 ## 6. Phase 3 — Import into Proxmox and create the VM
 
-Use **i440fx + SeaBIOS + LSI SCSI (or SATA)** so the guest keeps its expected
-disk device (`sda`) and does not need initramfs/virtio surgery.
+Use **i440fx + SeaBIOS + SATA (AHCI)** so the guest keeps its expected disk
+device (`sda`) and does not need initramfs/virtio surgery. **Do not use the LSI
+SCSI controller** — the OL6 guest's `sym53c8xx` driver panics under KVM
+(`sym_int_sir`, "Fatal exception in interrupt") under I/O load; SATA is stable.
 
 ```bash
 # Create the VM shell (adjust VMID/storage names)
@@ -293,15 +313,15 @@ disk device (`sda`) and does not need initramfs/virtio surgery.
 qm create 9000 --name ebs1213-golden \
   --memory 12288 --cores 4 --sockets 1 \
   --cpu Westmere --machine pc --bios seabios \
-  --scsihw lsi --ostype l26 --balloon 0 \
+  --ostype l26 --balloon 0 \
   --net0 e1000,bridge=vmbr0 --onboot 0
 
-# Import the extracted VMDK, then attach it.
+# Import the extracted VMDK, then attach it as SATA (NOT scsi0/LSI — sym53c8xx panics).
 # NOTE: on LVM-thin (local-lvm) the disk is stored as raw; --format qcow2 only
 # applies to file storage (dir/NFS), so omit it here.
 qm importdisk 9000 /srv/ebs-media/<VMDK-FILENAME> local-lvm
-qm set 9000 --scsi0 local-lvm:vm-9000-disk-0
-qm set 9000 --boot order=scsi0
+qm set 9000 --sata0 local-lvm:vm-9000-disk-0
+qm set 9000 --boot order=sata0
 
 # Optional: console access
 qm set 9000 --serial0 socket --vga std
@@ -311,7 +331,8 @@ qm terminal 9000      # or use the web console
 ```
 > `qm importovf` is an alternative that **creates the VM itself** (don't also run
 > `qm create`): `qm importovf 9000 /srv/ebs-media/<OVF-FILENAME> local-lvm`, then
-> `qm set 9000 --machine pc --bios seabios --scsihw lsi --balloon 0 --net0 e1000,bridge=vmbr0`.
+> `qm set 9000 --machine pc --bios seabios --balloon 0 --net0 e1000,bridge=vmbr0`
+> (attach the disk as **`sata0`**, not `scsi0`).
 
 Notes:
 - Use the **2014 "Virtual Appliances" media pack** (OL 6.5, OVM/VirtualBox
@@ -387,20 +408,27 @@ $ADMIN_SCRIPTS_HOME/adstpall.sh                 # stop all
 
 ---
 
-## 8. Phase 5 — Golden template and snapshots
+## 8. Phase 5 — Golden template
 
 ```bash
 # Stop the EBS tiers cleanly first (as oracle), then halt the OS:
 su - oracle -c "/u01/install/APPS/scripts/stopapps.sh"
 su - oracle -c "/u01/install/VISION/scripts/stopvisiondb.sh"
 ssh root@<ip> 'shutdown -h now'      # `qm shutdown 9000` times out — no acpid
-qm snapshot 9000 golden-clean --description "Pristine R12.1.3 Vision, pw changed"
 
-# Convert to a template (optional; keeps it from accidental boots)
+# Generalize the NIC before templating so linked clones don't collide:
+#   rm /etc/udev/rules.d/70-persistent-net.rules
+#   set a placeholder IP (e.g. .230) and point /etc/hosts at it, then shut down.
+
+# Convert to a template (Proxmox refuses if the VM still has snapshots):
 qm template 9000
 ```
 
-Booting the golden VM for class is forbidden — clone it instead.
+**Why no snapshot:** Proxmox will not templatize a VM that still has snapshots,
+and a template cannot take one — so the earlier `golden-clean` snapshot was
+**deleted** before `qm template 9000`. Resetting a clone is now **destroy +
+re-clone** (cheap, because clones are linked). Booting the golden template for
+class is forbidden — clone it instead.
 
 > **Verified 2026-10-03:** `qm shutdown 9000` does **not** power off this guest
 > (ACPI power button ignored — no `acpid`). Either `ssh root@<ip> 'shutdown -h now'`
@@ -419,7 +447,8 @@ qm set 9010 --memory 12288 --onboot 1
 # Per-student EBS linked clones (small deltas; requires linked-clone storage)
 for i in $(seq -w 1 12); do
   qm clone 9000 91$i --name ebs1213-stu$i --full 0
-  qm set 91$i --memory 10240 --onboot 0
+  qm set 91$i --memory 12288 --onboot 0
+  # then: set the clone IP/hostname + FND_NODES.SERVER_ADDRESS, restart OACORE (below)
 done
 ```
 
@@ -433,48 +462,62 @@ done
 
 Networking is the main gotcha: every clone is a **full EBS** configured for
 `ebs.example.com`, so several clones cannot answer to that one name on the same
-LAN. Either give each clone a **unique hostname + static IP** and re-run
-`$ADMIN_SCRIPTS_HOME/adautocfg.sh` as `oracle` (do **not** use `configwebentry.sh`
-— it is hardcoded to the `EBSDB_apps` context), with matching client `/etc/hosts`
-entries; or use the isolated **`vmbr1` VLAN + local DNS** so `ebs.example.com`
-resolves to each student's own sandbox. `vmbr1` is the cleaner, intended design.
+LAN. **As built (2026-10-03):** each clone keeps the hostname `ebs.example.com` but
+gets a **unique static IP** (class `.223`; sandboxes `.231–.235`), and each guest's
+`/etc/hosts` maps the name to its own IP — no AutoConfig needed. **One extra step is
+required:** after cloning, set the EBS DB's node address to the clone's own IP, or
+OACORE 500s —
+
+```sql
+-- run as: sqlplus apps/apps@EBSDB   (then restart OACORE)
+update fnd_nodes set server_address='<clone-ip>' where node_name='EBS';
+commit;
+```
+
+(the golden's DB ships `FND_NODES.SERVER_ADDRESS` = the golden's old IP, which the
+JTF distributed cache then tries to use). The alternative **`vmbr1` VLAN + local
+DNS** design is still a future refinement — see §9 / `PROGRESS.md` "Stage 9".
 
 Access model: the class clone is for **functional** use — create **one EBS user
 per student** (SYSADMIN → Security → Users) and share the instance. Give each
 student their own **Apps DBA sandbox** clone for destructive admin practice, and
 their own **client VM** for Forms. HTML pages work in any browser; Forms needs
-the 32-bit Firefox ESR52 + Oracle JRE 8 client (§10).
+the Firefox ESR52 + Java (IcedTea-Web) client (§10).
 
-> **RAM budget:** 12×EBS (10 GB) + class (12 GB) + 12×client (2 GB) ≈ **156 GB of
+> **RAM budget:** 12×EBS (12 GB) + class (12 GB) + 12×client (2 GB) ≈ **180 GB of
 > ~188 GiB**. Cap how many EBS sandboxes run simultaneously.
 
 ---
 
 ## 10. Phase 7 — Client access (Forms applet)
 
-**Decided 2026-09-29:** one **Oracle Linux 7.9 client VM per student** (template
-**9200** → clones **9201–9212**), running the legacy applet stack so the **stock
-12.1.3 appliance needs no server patching**:
+**Decided 2026-09-29 · stack updated 2026-10-03:** one **Oracle Linux 7.9 client VM
+per student** (template **9200** → clones **9201–9212**), running the legacy applet
+so the **stock 12.1.3 appliance needs no server patching**. Template `9200` is
+**built** (2026-10-03):
 
-- Browser: **32-bit Firefox ESR 52.9.0esr** (Mozilla archive) — last NPAPI build.
-- Runtime: **32-bit Oracle JRE 8** (`linux-i586`) — the only runtime with
-  `libnpjp2.so`; free for non-commercial/self-study.
-- Wiring: `ln -s <jre>/lib/i386/libnpjp2.so ~/.mozilla/plugins/` → verify in
-  `about:plugins`.
+- Browser: **Firefox ESR 52.9.0esr (x86_64)** (Mozilla archive) — last NPAPI build.
+- Runtime + plugin: **OpenJDK 8 (x86_64) + IcedTea-Web 1.7.1** (`/usr/lib64/IcedTeaPlugin.so`)
+  — the **free / no-Oracle-login** path (OpenJDK ships no plugin; IcedTea-Web supplies
+  it, so browser and plugin must share the architecture → 64-bit). **Fallback:**
+  32-bit Oracle JRE 8 (`linux-i586`, `libnpjp2.so`) + 32-bit Firefox.
+- Wiring: symlink the plugin into `/usr/lib64/mozilla/plugins`, `/opt/firefox/plugins`
+  and `~/.mozilla/plugins`; set `plugin.load_flash_only=false`; verify in
+  `about:plugins`. Add the EBS URL to the IcedTea-Web exception site.
+- Desktop: **Xfce** (archived EPEL 7) + lightdm autologin — light for 2 GB.
 - Access: **noVNC in-browser** (default; Proxmox user with `VM.Console`),
   **SPICE** optional (`vga: qxl` + `virt-viewer`). RDP rejected (xrdp unavailable
   on Oracle Linux 7).
-- Disable auto-updates; add the EBS URL to the Java **Exception Site List** and
-  allow legacy/SHA-1 JARs.
+- Disable auto-updates; allow legacy/SHA-1 JARs.
 
-**Build the client template once** (install OL7.9 + i686 libs, Firefox ESR52,
-JRE 8, plugin), confirm a Forms screen opens, then snapshot and linked-clone it to
-9201–9212. See `PLAN.md` §1.4 and `RESEARCH.md` §7.
+**Build the client template once**, confirm a Forms screen opens, then snapshot and
+linked-clone it to `9201–9212`. See `PLAN.md` §1.4 and `RESEARCH.md` §7.
 
-**Community/uncertified config:** Oracle certifies the FF-ESR52 + JRE8 plugin path
-on **Windows only**. The Oracle-supported alternative — **Java Web Start (JWS)** —
-needs server-side patches on 12.1.3 and is deferred. MVP-A skips all of this;
-validate the HTML login page from any browser first.
+**Community/uncertified config:** Oracle certifies the FF-ESR52 + Oracle JRE plugin
+path on **Windows only**. Both the Oracle `libnpjp2.so` route and the
+OpenJDK + IcedTea-Web route are community/uncertified. The Oracle-supported
+alternative — **Java Web Start (JWS)** — needs server-side patches on 12.1.3 and is
+deferred. MVP-A skips all of this; validate the HTML login page from any browser first.
 
 ---
 
@@ -493,14 +536,14 @@ validate the HTML login page from any browser first.
 
 ### Reset between batches
 ```bash
-# Option A: roll student clones back to the snapshot
-for i in $(seq -w 1 12); do qm rollback 91$i golden-clean; done
+# The golden is a TEMPLATE (no snapshot), so reset = destroy + re-clone (cheap, linked)
 
-# Option B: destroy and re-clone from the template (cleanest)
+# EBS sandboxes: clean state from the golden template
 for i in $(seq -w 1 12); do
   qm stop 91$i --skiplock 1 || true
   qm destroy 91$i --purge 1
   qm clone 9000 91$i --name ebs1213-stu$i --full 0
+  # then set the clone IP + FND_NODES.SERVER_ADDRESS and restart OACORE (see §9)
 done
 
 # Client clones: same idea, from the client template (9200)
@@ -534,11 +577,12 @@ concurrently. Add it only after the 12.1 lab is stable.
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| Boot hangs / no disk | Wrong controller; use LSI SCSI or SATA, i440fx + SeaBIOS |
+| Boot hangs / no disk | Wrong controller; use **SATA (AHCI)**, i440fx + SeaBIOS |
+| Kernel panic in `sym_int_sir [sym53c8xx]` | LSI SCSI emulation panics the OL6 driver under KVM → move the disk to `sata0` (see §6) |
 | Kernel panic on boot (`dtrace_psinfo_alloc`) | `--cpu host` panics the OL6 UEK kernel → use `qm set <id> --cpu Westmere` |
 | SSH "no matching host key type found" | OL6 sshd only offers `ssh-rsa` → `ssh -oHostKeyAlgorithms=+ssh-rsa root@<ip>` |
 | NIC is `eth1` | Delete `/etc/udev/rules.d/70-persistent-net.rules`, fix `ifcfg-eth0`, reboot |
-| Login page blank / applet error | Client browser/JRE mismatch — see §10 and `PLAN.md` §1.4 (applet needs 32-bit FF ESR52 + 32-bit Oracle JRE 8) |
+| Login page blank / applet error | Client browser/plugin mismatch — see §10 and `PLAN.md` §1.4 (applet needs Firefox ESR52 + an arch-matched NPAPI plugin: OpenJDK 8 + IcedTea-Web, or Oracle JRE 8) |
 | DB not up | Check listener (`lsnrctl status`), `$ORACLE_HOME`, alert log |
 | Services won't start after clone | Verify hostname/IP/`/etc/hosts`, run Autoconfig |
 | Login page **HTTP 500** (OC4J servlet error) | FND `.dbc` is still the shipped `template.dbc` (`DB_HOST=host_name`) → run `adautocfg.sh appspass=apps` as `oracle`, then `startapps.sh` |

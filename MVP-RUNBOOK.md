@@ -27,18 +27,17 @@ paid APIs/cloud calls** anywhere in this runbook.
 | Oracle account (SSO) | $0 | Free sign-up; no card required. Used only to reach edelivery. |
 | EBS 12.1.3 Vision appliance | $0 to download | **Not free software.** Download is free but Oracle's terms apply. See restrictions below. |
 | Guest OS (Oracle Linux 6.5, inside the appliance) | $0 | Already included. A paid Oracle Linux support subscription is **not** needed and not purchased. |
-| Client Java runtime (MVP-B) | $0 | The **applet plugin** needs **32-bit Oracle JRE 8** (the plugin `libnpjp2.so` exists only in Oracle JRE, not OpenJDK). Java SE 8 is free to download; Oracle's commercial-use terms apply only to paid/commercial use. For JWS you can instead use **OpenJDK 8 + IcedTea-Web** (GPL). |
+| Client Java runtime (MVP-B) | $0 | The Forms applet needs an **NPAPI plugin**. Chosen free path: **OpenJDK 8 + IcedTea-Web 1.7.1** (OL7 repo) — no Oracle login. IcedTea-Web supplies the plugin OpenJDK lacks; browser + plugin must match arch (64-bit). Fallback: **32-bit Oracle JRE 8** (`libnpjp2.so`, free download, needs an Oracle account). |
 | Client OS (MVP-B) | $0 | **Oracle Linux 7.9** ISO is free from yum.oracle.com. OL7 is EOL but fine offline. |
-| Firefox ESR 52 **32-bit** (legacy applet client) | $0 | MPL, free from the Mozilla archive. Only the **32-bit** build keeps NPAPI. EOL/unsupported → offline only. |
+| Firefox ESR 52 (**x86_64**) | $0 | MPL, free from the Mozilla archive. Last NPAPI-capable Firefox (ESR). EOL/unsupported → offline only. |
 | Console access | $0 | **noVNC in-browser** needs nothing installed; **SPICE** needs free `virt-viewer`. |
 | Debian/ISO for any later VM | $0 | Free downloads. |
 
 **Not part of this free path (avoid unless you already own a licence):**
 - a **Windows** client VM (Windows itself is licensed), and
 - **Oracle Java 8 for *commercial* use** — Java SE 8 is free to download and fine
-  for self-study, but paid use needs a subscription. Note the applet plugin
-  requires Oracle JRE 8 (OpenJDK 8 has no `libnpjp2.so`); for JWS you can use
-  OpenJDK 8 + IcedTea-Web instead.
+  for self-study, but paid use needs a subscription. *(We use the free
+  OpenJDK 8 + IcedTea-Web path; Oracle JRE is only the fallback.)*
 
 **Restrictions you must respect (they are legal, not technical):**
 - Offline / LAN-only; non-commercial; development/self-study; **no redistribution**;
@@ -239,12 +238,14 @@ ls -lh ./*.ovf ./*.vmdk
 
 ## Step 5 — Create the VM and import the disk
 
-Use i440fx + SeaBIOS + LSI SCSI so the guest keeps its expected `sda` disk.
+Use i440fx + SeaBIOS + **SATA (AHCI)** so the guest keeps its expected `sda` disk.
+**Do not use the LSI SCSI controller** — the OL6 guest's `sym53c8xx` driver panics
+under KVM (`sym_int_sir`) under I/O load.
 Replace `local-lvm` with your real storage name from Step 1.
 
 > **Why create + `importdisk`:** `qm importovf` *creates the VM itself* and fails
 > if VMID 9000 already exists. Since we want to force the hardware (i440fx /
-> SeaBIOS / LSI / e1000), create the shell first, then `qm importdisk` the VMDK.
+> SeaBIOS / SATA / e1000), create the shell first, then `qm importdisk` the VMDK.
 
 ```bash
 # 1) Create the VM shell (golden, VMID 9000)
@@ -252,16 +253,16 @@ Replace `local-lvm` with your real storage name from Step 1.
 qm create 9000 --name ebs1213-golden \
   --memory 12288 --cores 4 --sockets 1 \
   --cpu Westmere --machine pc --bios seabios \
-  --scsihw lsi --ostype l26 --balloon 0 \
+  --ostype l26 --balloon 0 \
   --net0 e1000,bridge=vmbr0 --onboot 0
 
 # 2) Import the extracted VMDK. NOTE: on LVM-thin (local-lvm) the disk is stored
 #    as raw; --format qcow2 is only valid for file storage (dir/NFS) -> omit it.
 qm importdisk 9000 "/srv/ebs-media/<VMDK-FILENAME>" local-lvm
 
-# 3) Attach it as scsi0 and make it bootable
-qm set 9000 --scsi0 local-lvm:vm-9000-disk-0
-qm set 9000 --boot order=scsi0
+# 3) Attach it as SATA (NOT scsi0/LSI: sym53c8xx panics under KVM) and make it bootable
+qm set 9000 --sata0 local-lvm:vm-9000-disk-0
+qm set 9000 --boot order=sata0
 
 # 4) Console access
 qm set 9000 --serial0 socket --vga std
@@ -273,12 +274,13 @@ qm config 9000
 Alternate single command (lets the OVF set the hardware; **do not** also run step 1):
 ```bash
 qm importovf 9000 /srv/ebs-media/<OVF-FILENAME> local-lvm
-qm set 9000 --machine pc --bios seabios --scsihw lsi --balloon 0 --net0 e1000,bridge=vmbr0
+qm set 9000 --machine pc --bios seabios --balloon 0 --net0 e1000,bridge=vmbr0
+# then attach the disk as SATA: qm set 9000 --sata0 local-lvm:vm-9000-disk-0
 ```
 
 **Checkpoints:**
-- [ ] `qm config 9000` shows `machine: pc`, `bios: seabios`, `scsihw: lsi`,
-      `balloon: 0`, an `e1000` NIC, and `scsi0` on your real storage.
+- [ ] `qm config 9000` shows `machine: pc`, `bios: seabios`, `balloon: 0`, an
+      `e1000` NIC, and **`sata0`** on your real storage.
 - [ ] The disk is thin and the right size (resize later if needed).
 
 > `e1000` is the safe first NIC for this Oracle Linux 6.5 guest (the appliance
@@ -398,6 +400,12 @@ qm listsnapshot 9000             # expect golden-clean present
 
 **MVP-A is complete:** one working instance + a rollback point. Stop here.
 
+> **Update 2026-10-03:** when the lab scaled to clones, the golden was **generalized
+> (NIC placeholder) and converted to a Proxmox template**. Because a template cannot
+> hold snapshots, the `golden-clean` snapshot was **deleted** first
+> (`qm delsnapshot 9000 golden-clean` → `qm template 9000`). Reset is now
+> **destroy + re-clone** (see `README.md` §8 and §11).
+
 **Deferred:** do *not* yet build clones, the class instance, the client VM, or
 helper containers. Bask in the working instance first.
 
@@ -405,18 +413,20 @@ helper containers. Bask in the working instance first.
 
 ## Step 9 — MVP-B: one Forms screen (client)
 
-R12.1.3 Forms needs a Java runtime. **Decided 2026-09-29:** build a dedicated
-**Oracle Linux 7.9 client VM per student** (template **9200** → clones
-**9201–9212**) running the **legacy applet** stack — so the stock appliance needs
-**no server patching**:
+R12.1.3 Forms needs a Java runtime. **Decided 2026-09-29; stack updated
+2026-10-03:** build a dedicated **Oracle Linux 7.9 client VM per student** (template
+**9200** → clones **9201–9212**) running the **legacy applet** — so the stock
+appliance needs **no server patching**:
 
-- Browser: **32-bit Firefox ESR 52.9.0esr** (Mozilla archive) — last NPAPI build.
-- Runtime: **32-bit Oracle JRE 8** (`linux-i586`) — only runtime with
-  `libnpjp2.so`; free for non-commercial/self-study.
-- Wiring: `ln -s <jre>/lib/i386/libnpjp2.so ~/.mozilla/plugins/` → check
-  `about:plugins`.
-- Access: **noVNC in-browser** (default) or **SPICE** (`vga: qxl`). RDP rejected
-  on OL7.
+- Browser: **Firefox ESR 52.9.0esr (x86_64)** (Mozilla archive) — last NPAPI build.
+- Runtime + plugin: **OpenJDK 8 + IcedTea-Web 1.7.1** (`/usr/lib64/IcedTeaPlugin.so`)
+  — free, no Oracle login; arch must match the browser → 64-bit. Fallback: 32-bit
+  Oracle JRE 8 (`libnpjp2.so`).
+- Desktop: **Xfce** (archived EPEL 7) + lightdm.
+- Wiring: symlink the plugin into `/usr/lib64/mozilla/plugins` (and
+  `/opt/firefox/plugins`, `~/.mozilla/plugins`); set `plugin.load_flash_only=false`;
+  check `about:plugins`.
+- Access: **noVNC in-browser** (default) or **SPICE** (`vga: qxl`). RDP rejected on OL7.
 - Disable auto-updates; add the EBS URL to the Java **Exception Site List** and
   allow legacy/SHA-1 JARs.
 
@@ -437,14 +447,15 @@ troubleshooting time on JRE security settings — see `RESEARCH.md` §7.
 
 | Symptom | Likely fix |
 |---------|-----------|
-| VM won't boot / "no bootable device" | Controller must be **LSI SCSI or SATA**; boot order `scsi0`. |
+| VM won't boot / "no bootable device" | Controller must be **SATA (AHCI)**; boot order `sata0`. |
+| Kernel panic in `sym_int_sir [sym53c8xx]` | LSI SCSI emulation panics the OL6 driver under KVM → move disk to `sata0`. |
 | Kernel panic on boot (`dtrace_psinfo_alloc` / `oops_end`) | OL6 UEK panics with `--cpu host` → `qm set 9000 --cpu Westmere` |
 | NIC is `eth1` after import | Delete `70-persistent-net.rules`, fix `ifcfg-eth0`, reboot. |
 | Login page times out | Guest IP/hostname mismatch; service not started; firewall. |
 | Services won't start after IP change | Re-run Autoconfig; check `/etc/hosts` + hostname. |
 | Login page **HTTP 500** (OC4J servlet error) | FND `.dbc` is still the shipped template (`DB_HOST=host_name`) → `adautocfg.sh appspass=apps` as `oracle`, then `startapps.sh`. |
 | OACORE/OAFM show `Init` right after start | Timing — wait 30–60 s, re-check `adopmnctl.sh status`. |
-| Forms won't launch | Applet needs **32-bit** Firefox ESR 52 + **32-bit Oracle JRE 8**; JWS needs server patches. See Step 9. |
+| Forms won't launch | Applet needs Firefox ESR 52 + an arch-matched NPAPI plugin (**OpenJDK 8 + IcedTea-Web**, or Oracle JRE 8); JWS needs server patches. See Step 9. |
 | `qm importdisk --format qcow2` errors | `qcow2` is invalid on LVM-thin → drop `--format` or use `dir`/ZFS. |
 | Product not on edelivery | Stop — catalog changes; confirm the 2014 "Virtual Appliances" pack is listed. |
 | Out of staging space | Delete `.zip`/parts/`.ova` after successful import. |

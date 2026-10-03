@@ -136,8 +136,9 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
   download (~51.5 GB vs ~68 GB + much larger staging), no WebLogic, DB 11g, single
   APPL_TOP, more instances per TB → best for **10+ users on HDD + slow internet**.
 - **But "older = easier" is only half true.** 12.1.3's **client access is harder**
-  (legacy 32-bit Firefox ESR 52 + 32-bit Oracle JRE 8, or server patches for
-  JWS). **12.2.12 has JWS enabled by default** — Forms "just works" with JRE 8.
+  (legacy Firefox ESR 52 + Java applet plugin — free OpenJDK 8 + IcedTea-Web, or
+  Oracle JRE; or server patches for JWS). **12.2.12 has JWS enabled by default** —
+  Forms "just works" with JRE 8.
 - 12.1.3 is **Sustaining Support** (no new fixes; OL6/11g EOL); 12.2.12 is
   **Premier to ≥2037**, DB 19c, ADOP/EBR — more employable.
 - **No free cloud escape hatch** — local (on-prem) is the only $0 route.
@@ -168,16 +169,16 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
 - **OCI / cloud** — rejected (not free; appliance on-prem-only). **(H)**
 - **Community OVAs** — rejected (trust/checksum/licensing; no effort saving). **(L)**
 
-### 4.4 Client decision — RESOLVED 2026-09-29
-- **One client VM per student** (template **9200** → clones **9201–9212**).
-- OS **Oracle Linux 7.9 (64-bit)**; **32-bit Firefox ESR 52 + 32-bit Oracle JRE 8**
-  NPAPI plugin (legacy applet; no 12.1.3 server patching). All artifacts verified
-  obtainable ($0). Full validation in §7 below.
+### 4.4 Client decision — RESOLVED 2026-09-29 · stack updated 2026-10-03
+- **One client VM per student** (template **9200** → clones **9201–9212**; `9200` built).
+- OS **Oracle Linux 7.9 (64-bit)** + **Xfce**; **Firefox ESR 52 (x86_64) + OpenJDK 8
+  + IcedTea-Web 1.7.1** NPAPI plugin (legacy applet; no 12.1.3 server patching).
+  Chosen for **$0 with no Oracle login**; `about:plugins` verified Enabled.
+  **Fallback:** 32-bit Oracle JRE 8 + 32-bit Firefox. Full validation in §7.
 - Access **noVNC in-browser** (default, zero student install) or **SPICE**
-  (`vga: qxl`; needs `virt-viewer`). **RDP rejected** — xrdp unavailable on OL7
-  (EPEL 7 EOL).
-- Accepted: an **uncertified Linux config** (Oracle certifies this plugin path on
-  Windows only). JWS deferred.
+  (`vga: qxl`; needs `virt-viewer`). **RDP rejected** — xrdp unavailable on OL7.
+- Accepted: an **uncertified Linux config** (Oracle certifies the Oracle-plugin path
+  on Windows only). JWS deferred.
 
 ### 4.4a Related decisions confirmed 2026-09-29
 - **Staging location:** a dedicated Proxmox VM (`ebs-staging`, Debian 12/13, 2 vCPU,
@@ -233,34 +234,36 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
 
 ---
 
-## 7. Client stack research (2026-09-29)
+## 7. Client stack research (2026-09-29 · updated 2026-10-03)
 
-Validated the decided client: **Oracle Linux 7.9 + 32-bit Firefox ESR 52.9.0esr +
-32-bit Oracle JRE 8**, one VM per student, accessed via Proxmox noVNC/SPICE.
+Built and validated the client: **Oracle Linux 7.9 + Xfce + Firefox ESR 52.9.0esr
+(x86_64) + OpenJDK 8 + IcedTea-Web 1.7.1**, one VM per student, via noVNC/SPICE.
 
 ### 7.1 Verified obtainable ($0)
 - **Oracle Linux 7.9 ISO** — free at <https://yum.oracle.com/oracle-linux-isos.html>.
   OL7 Premier ended **2024-12-31**; Extended Support (paid) to ~**Jun 2028**.
   Irrelevant offline. **(H)**
-- **i686 multilib** — present in OL7's **x86_64** repo (Oracle's `OL7/latest/x86_64`
-  metadata parsed: ~27k packages, ~**4,502 i686**, incl. `glibc`, `gtk3`,
-  `dbus-glib`, `libXt`, `alsa-lib`, `nspr`, `nss`). Install with `yum install
-  <pkg>.i686`. **(H)**
-- **Firefox ESR 52.9.0esr i686** — Mozilla archive
-  `https://ftp.mozilla.org/pub/firefox/releases/52.9.0esr/linux-i686/en-US/firefox-52.9.0esr.tar.bz2`
-  (SHA256 `6a99d34d…b7ce`). Self-contained tarball; runs on 64-bit OL7 with the
-  i686 libs. **Last NPAPI (non-Flash) Firefox; only the 32-bit build keeps it.** **(H)**
-- **32-bit Oracle JRE 8 (`linux-i586`)** — Java SE 8 archive, needs free Oracle
-  account + licence click. Ships `lib/i386/libnpjp2.so`. Free for
-  non-commercial/self-study. **(H on availability; M–H on licence nuance)**
+- **Firefox ESR 52.9.0esr x86_64** — Mozilla archive
+  `https://archive.mozilla.org/pub/firefox/releases/52.9.0esr/linux-x86_64/en-US/firefox-52.9.0esr.tar.bz2`
+  (~56 MB). Self-contained tarball. Last NPAPI-capable Firefox (ESR). **(H, built)**
+- **OpenJDK 8 (`java-1.8.0-openjdk.x86_64`, 1.8.0_432)** — OL7 repo. **(H, built)**
+- **IcedTea-Web 1.7.1** — OL7 repo / archived EPEL 7; ships the NPAPI plugin
+  `/usr/lib64/IcedTeaPlugin.so`. OpenJDK itself has **no** plugin, so IcedTea-Web
+  supplies it; **browser and plugin must match arch** → 64-bit stack. **(H, built;
+  applet support is the community/uncertain part)**
+- **(Fallback) 32-bit Oracle JRE 8 (`linux-i586`)** — Java SE 8 archive, needs a
+  free Oracle account + licence click; ships `lib/i386/libnpjp2.so`. **(H on
+  availability; M–H on licence nuance)**
+- **Xfce** — from the **archived** EPEL 7 repo
+  (`https://dl.fedoraproject.org/pub/archive/epel/7/x86_64`).
 
 ### 7.2 Wiring & gotchas
-- `mkdir -p ~/.mozilla/plugins && ln -s <jre>/lib/i386/libnpjp2.so ~/.mozilla/plugins/`
-  → confirm in `about:plugins`. Arch must match (32-bit browser ↔ 32-bit plugin). **(H)**
-- Expect JRE security friction: **Exception Site List** for the EBS URL, unsigned/
-  **SHA-1** JAR handling (`deployment.security.level`), possibly
-  `plugin.load_flash_only=false`; disable Firefox auto-update. **(M)** (MOS
-  393931.1/389422.1 gated.)
+- Symlink the plugin into `/usr/lib64/mozilla/plugins`, `/opt/firefox/plugins` and
+  `~/.mozilla/plugins`, then confirm in `about:plugins`. **Arch must match**
+  (x86_64 Firefox ↔ `/usr/lib64/IcedTeaPlugin.so`). **(H, built)**
+- Firefox 52 defaults to Flash-only NPAPI → set `plugin.load_flash_only=false` via
+  `defaults/pref/local-settings.js` + `mozilla.cfg`. Add the EBS URL to
+  `/etc/icedtea-web/exception.sites`; disable Firefox auto-update. **(M)**
 
 ### 7.3 Access method (Proxmox)
 - **noVNC in-browser** — per-VM, no client install; grant students a Proxmox user
@@ -274,9 +277,11 @@ Validated the decided client: **Oracle Linux 7.9 + 32-bit Firefox ESR 52.9.0esr 
   (qcow2 backing chain), so `local-lvm` is fine. **(H)**
 
 ### 7.4 Verdict
-Valid, buildable, $0 — but a **community/uncertified** Linux configuration; expect
-troubleshooting time on **JRE security settings**, not on binary availability.
-The Oracle-supported alternative (JWS on 12.1.3) needs server patches and is
+Built and plugin-verified, **$0 with no Oracle login** — but a **community/
+uncertified** configuration. The **OpenJDK 8 + IcedTea-Web** plugin launches applets;
+whether it runs the **EBS Forms applet** is the uncertain part — test it, and fall
+back to 32-bit Oracle JRE 8 if it won't. The Oracle-supported
+alternative (JWS on 12.1.3) needs server patches and is
 deferred.
 
 ### 7.5 Client-stack sources
