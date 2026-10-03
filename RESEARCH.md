@@ -30,7 +30,7 @@ route for this exact hardware/budget, or is there a better free option?
 | Item | EBS 12.1.3 | EBS 12.2.12 |
 |------|-----------|-------------|
 | OS / DB / app stack | OL 6.5; DB **11.2.0.4**; Forms/Reports 10.1.2.3; **OC4J/OracleAS 10.1.3.5 — no WebLogic**; JDK 1.7.0_60 **(H)** | OL 7.9; DB **19c (19.18 RU)**; **WebLogic 10.3.6**; Web Tier 11.1.1.9; JDK 1.7.0_371; JRE 8u361; **JWS enabled by default (H)** |
-| Media / staging | ~6 catalog parts → ~14 OVA parts; assembled **VMDK ≈ 57 GB** **(M)** (~2–3× staging) | **10 files ≈ 68 GB**; +~80 GB unzip +~75 GB concat → budget **200–250 GB staging** **(M)** |
+| Media / staging | **7 catalog parts (V46557–V46563) → 14 zips (~51.5 GB)**; assembled **VMDK = 53.8 GiB compressed `streamOptimized` → 300 GiB virtual → ~243 GiB expanded** **(H, verified 2026-10-02)** (~2–3× staging) | **10 files ≈ 68 GB**; +~80 GB unzip +~75 GB concat → budget **200–250 GB staging** **(M)** |
 | Deployed guest disk | Vision DB filesystem **≈ 208 GB** fresh; total install ≈ 233 GB **(H)** | DB node Vision ≈ 200 GB + app tier ≈ 64 GB ≈ **~265 GB** full (dual fs1/fs2) **(H)** |
 | Oracle-documented RAM | **No public number confirmed** — sizing guide gives factors only; deployment guide MOS 1906691.1 **(gated, L)** | **6 GB DB + 10 GB app ≈ 16 GB** for "≤10 users"; **4+6 GB** for 0–10 OAF light/medium **(H)** |
 | vCPU | commonly 2–4; no Oracle number confirmed **(L)** | **2 per tier** minimum (0–10 user table) **(H)** |
@@ -133,7 +133,7 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
 ## 3. Verdict as researched
 
 - **12.1.3 is a defensible, acceptable choice** for resource/scale: smaller
-  download (~57 GB vs ~68 GB + much larger staging), no WebLogic, DB 11g, single
+  download (~51.5 GB vs ~68 GB + much larger staging), no WebLogic, DB 11g, single
   APPL_TOP, more instances per TB → best for **10+ users on HDD + slow internet**.
 - **But "older = easier" is only half true.** 12.1.3's **client access is harder**
   (legacy 32-bit Firefox ESR 52 + 32-bit Oracle JRE 8, or server patches for
@@ -196,8 +196,10 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
 ## 5. Unconfirmed / to verify
 - **(L)** Oracle's documented RAM/vCPU for the **12.1.3 appliance** (MOS
   1906691.1 gated).
-- **(L)** Exact decompressed VMDK size for 12.1.3 single-node (~57 GB is a 2014
-  user observation; guest disk is thin).
+- **~~L~~ Verified 2026-10-02:** the VMDK was a **compressed `streamOptimized`
+  file (53.8 GiB) with a 300 GiB virtual size**; after import the LVM-thin volume
+  maps **~243 GiB** (the Vision install). The pack was 7 catalog parts → 14 zips
+  (~51.5 GB) with no readme or checksums.
 - **L** Exact 12.2.12 appliance RAM/disk minima (MOS 2933812.1 gated).
 - **M** Whether 1.6 TB is one disk or a multi-disk array (still unknown) — changes
   the I/O analysis. Host CPU/RAM are now verified (Xeon Gold 6138, 188 GiB).
@@ -219,7 +221,7 @@ MB for 12.1 vs 12.2 is not published in one table — treat as directional. **(M
 | Oracle blog, 12.1.3 Sustaining Support — https://blogs.oracle.com/ebstech/reminder-ebs-1213-moves-to-sustaining-support-on-jan-1-2022 | what Sustaining excludes | H |
 | OCI Always Free Resources — https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm | free-tier limits; no EBS | H |
 | Oracle Cloud Free Tier — https://www.oracle.com/cloud/free/ | Always Free service list (EBS absent) | H |
-| VirtualBox forum (2014) — https://forums.virtualbox.org/viewtopic.php?t=64015 | ~14 OVA parts, ~57 GB VMDK | M |
+| VirtualBox forum (2014) — https://forums.virtualbox.org/viewtopic.php?t=64015 | ~14 OVA parts, ~57 GB VMDK (verified: 14 zips ~51.5 GB; VMDK 53.8 GiB compressed / 300 GiB virtual / ~243 GiB expanded) | M |
 | techgoeasy, 12.2.12 on VirtualBox — https://techgoeasy.com/step-by-step-r12-2-6-ebs-installation-on-virtual-box/ | 12.2 staging sizes | M |
 | Pythian, 12.1.3 VirtualBox in 1 hour — https://www.pythian.com/blog/build-an-ebs-12.1.3-sandbox-in-virtualbox-in-1-hour | older 12.1 templates, Xen caveat, small RAM floor | M |
 | rishoradev, EBS R12 on VirtualBox — https://blog.rishoradev.com/2021/04/12/oracle-ebs-r12-on-virtualbox/ | appliance layout, ports | M |

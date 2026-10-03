@@ -1,7 +1,8 @@
 # Lab Plan — OS Choices, Resources, and Verification
 
-Planning + decision layer for the EBS 12.1.3 training lab. **Nothing has been
-executed yet; all major decisions are locked (2026-09-29).** It answers:
+Planning + decision layer for the EBS 12.1.3 training lab. **Major decisions are
+locked (2026-09-29); execution is well past planning — see `PROGRESS.md` for the
+live build state.** It answers:
 
 1. **Which OS for each role in the lab** (Proxmox host, EBS guest, staging VM,
    student client VM).
@@ -112,7 +113,9 @@ root/local dirs were too small. See `PROGRESS.md` for exact state.
   is smaller and simpler; the choice is irrelevant to EBS.)
 - **Resources: vCPU 2, RAM 2–4 GB, OS disk ~32 GB.** Download is network-bound;
   unzip/tar is CPU+disk. More RAM buys nothing here.
-- **Staging space ~300 GB thin.** Assembled 12.1.3 VMDK is ~57 GB; worst case with
+- **Staging space ~300 GB thin.** The 12.1.3 VMDK is a compressed
+  `streamOptimized` file (~54 GiB on disk; **300 GiB virtual**, expanding to
+  ~243 GiB of real data on import); worst case with
   zips + parts + concatenated OVA + extracted VMDK all present ≈ 150–200 GB, so
   300 GB gives headroom. Delete intermediates as you go.
 - **Where the staging space lives (important):** `qm importovf`/`qm importdisk`
@@ -186,9 +189,11 @@ RAM check: 12×10 (EBS) + 12 (class) + 12×2 (clients) ≈ **156 GB of ~188 GiB*
 (~24 GB host headroom). **Tight:** running all 12 EBS sandboxes + 12 clients +
 class at once nearly fills RAM — cap concurrent sandboxes (e.g. ~8) or accept
 swap risk. Clients at 4 GB each would not fit; keep them at **2 GB**.
-Storage check: EBS base ~300 GiB + class full clone ~300 GiB + deltas + client
-base/clones ≈ **800–900 GiB of 1.67 TiB**. Fine. Both work **only if clones are
-linked** — do not full-clone.
+Storage check: the golden disk is 300 GiB *virtual* and actually maps **~243 GiB**
+(Vision DB filesystem). A full clone (class) duplicates that ~243 GiB; linked
+clones share it and store only deltas. So base + class ≈ **~0.5 TiB**, leaving
+room for deltas/clients within the pool's ~1.31 TiB free. This works **only if
+clones are linked** — do not full-clone.
 
 ### 2.2 Software / media to obtain
 
@@ -216,8 +221,8 @@ appliance revision.
 
 ### Phase 0 — Host verification (before any download)
 Steps: run the read-only checks in `README.md` §3.
-- **Verify:** `pveversion` → `pve-manager/8.x`.
-- **Verify:** `lscpu | grep -o -E 'cx16|popcnt|sse4_2|lahf_m' | sort -u` → all 4
+- **Verify:** `pveversion` → `pve-manager/8.x` or **9.x** (verified host: **9.2.20**).
+- **Verify:** `lscpu | grep -o -E 'cx16|popcnt|sse4_2|lahf_lm' | sort -u` → all 4
   flags present (else use PVE 7).
 - **Verify:** `pvesm status` → a storage type supporting snapshots/linked clones
   (**LVM-thin, ZFS, or dir/qcow2** all qualify).
@@ -249,7 +254,8 @@ VM itself — don't also run `qm create`.)
 - **Verify:** `qm config 9000` → machine `pc`, bios `seabios`, scsihw `lsi`,
   `e1000`/`virtio` NIC on the chosen bridge, `balloon: 0`.
 - **Verify:** `lvs` / `qm config 9000` → `scsi0` points at the imported disk.
-- **Verify:** disk is thin and roughly 150–200 GB after resize.
+- **Verify:** disk is thin and matches the VMDK's **300 GiB virtual size** (do
+  not shrink below it).
 - **If it fails:** "no bootable disk" → wrong controller (must be LSI SCSI or
   SATA, not virtio-scsi) or wrong boot order; `--format qcow2` errors on
   LVM-thin → drop it or use `dir`/ZFS storage.
@@ -391,8 +397,9 @@ login-gated and were confirmed only indirectly where noted.
 - **M** Linux client via OpenJDK 8 + IcedTea-Web can launch EBS Forms JNLP
   (<https://github.com/AdoptOpenJDK/IcedTea-Web/issues/815>); OpenWebStart does
   **not** support applet-style JNLP (<https://github.com/karakun/OpenWebStart>).
-- **L** Exact media-pack part count/total size (one 2014 user report: ~14 OVA
-  parts, ~57 GB VMDK). Confirm from the readme.
+- **Verified 2026-10-02** (was **L**): 7 catalog parts (V46557–V46563) → **14
+  zips (~51.5 GB)** → one **compressed `streamOptimized` VMDK** (~54 GiB file,
+  300 GiB virtual, ~243 GiB expanded). No readme and no published checksums.
 
 ### Corrections applied to earlier drafts
 1. `qm importdisk … local-lvm --format qcow2` was wrong → use `qm importovf` or
@@ -407,4 +414,5 @@ login-gated and were confirmed only indirectly where noted.
 6. **`--cpu host` panics the OL6 UEK kernel** (`dtrace_psinfo_alloc` during
    `execve`) → use **`--cpu Westmere`** (verified working 2026-10-02). Applies to
    the golden VM and all clones.
-7. Golden disk is actually **300 GiB** (VMDK virtual size; 54 G was sparse).
+7. Golden disk is **300 GiB virtual / ~243 GiB used** (the 53.8 GiB VMDK file was
+   `streamOptimized`/compressed, not sparse).

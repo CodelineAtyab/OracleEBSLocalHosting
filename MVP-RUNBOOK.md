@@ -167,7 +167,8 @@ Do this in a browser on your PC.
      OVM + VirtualBox compatible), **not** the older 2013 "Oracle VM Templates"
      pack (Oracle Linux 5 + a **Xen** kernel that won't boot on Proxmox).
    - The Single Node VISION pack's catalog part numbers are
-     **V46557-01 … V46562-01** (six entries, each split 1-of-2 / 2-of-2).
+     **V46557-01 … V46563-01** (**seven** entries, each split 1-of-2 / 2-of-2 =
+     14 zips, ~51.5 GB).
 5. Accept the **Oracle Standard Terms and Restrictions**. No Support Identifier
    (CSI) is required — if it demands one or payment, STOP.
 
@@ -175,7 +176,10 @@ Do this in a browser on your PC.
 > the 12.1.3 appliance and cites MOS 1906691.1, but the eDelivery catalog is now
 > behind sign-in and the latest *public* confirmation of the 12.1.3 pack is 2022.
 > Confirm it is actually listed before committing to the long download.
-6. **Open the media-pack readme first.** Record:
+6. **Open the media-pack readme / documentation.** **Note:** the 2014 pack we
+   downloaded had **no readme inside the zips and no published checksums** —
+   record whatever the edelivery page shows and treat seeded passwords as
+   *try-first* (verify on the VM). Record:
    - exact file names + how many parts,
    - published checksums (if any),
    - seeded OS / EBS / DB passwords (**local note only**).
@@ -291,7 +295,8 @@ qm start 9000
 qm terminal 9000        # or use the web UI console; Ctrl-O then Ctrl-Q to exit
 ```
 
-In the guest console, log in with the **seeded root credentials from the readme**.
+In the guest console, log in as `root` (there was **no readme in the media** — use
+a community-seeded credential and change it).
 
 ```bash
 # What network interface do we have?
@@ -304,12 +309,16 @@ rm -f /etc/udev/rules.d/70-persistent-net.rules
 # reboot
 ```
 
-Set a **static IP + hostname** (or DHCP to get going fast — static is the target):
+Set a **static IP** (the appliance ships hostname `ebs` / `ebs.example.com`, and
+the EBS context is already built around it — **do not invent a new hostname**):
 ```bash
-# (verify) file/paths per appliance; example
-hostnamectl set-hostname ebs1213
+# Preferred: the appliance's own helper (updates the context and runs AutoConfig)
+sh /u01/install/scripts/configstatic.sh
+
+# Manual fallback — NOTE: Oracle Linux 6.5 has NO `hostnamectl` (that is OL7+):
+vi /etc/sysconfig/network                      # HOSTNAME=ebs.example.com
 vi /etc/sysconfig/network-scripts/ifcfg-eth0   # BOOTPROTO=static, IPADDR, NETMASK, GATEWAY
-vi /etc/hosts                                  # add: <ip> ebs1213
+vi /etc/hosts                                  # <ip>  ebs.example.com  ebs
 service network restart
 ```
 
@@ -320,35 +329,40 @@ service network restart
 
 **Checkpoints:**
 - [ ] `hostname -f` returns the expected name.
-- [ ] `ping -c2 <its-own-ip>` and `ping -c2 ebs1213` succeed.
+- [ ] `ping -c2 <its-own-ip>` and `ping -c2 ebs` succeed.
 - [ ] `ip addr` shows the intended IP.
 
-> Changing hostname/IP usually requires an EBS reconfigure (Step 7). Follow the
-> appliance readme + **MOS 1906691.1**; do not guess.
+> Changing hostname/IP usually requires an EBS reconfigure (Step 7). Prefer the
+> appliance's own scripts / **MOS 1906691.1**; do not guess. (There is **no readme
+> in the media** — see Step 3.)
 
 ---
 
 ## Step 7 — Start EBS and verify the login page (MVP-A core)
 
-Follow the appliance readme for the exact start scripts. The 2014 appliance
-layout is `/u01/install/VISION` (this is **not** the 12.2 `/u01/install/APPS`
-layout):
+The 2014 appliance puts **both tiers on one VM**: the **DB** under
+`/u01/install/VISION` and the **apps tier** under `/u01/install/APPS`. Start them
+as the **`oracle`** user via the appliance wrappers (they feed the APPS password
+for you):
 
 ```bash
-ls /u01/install/VISION/ 2>/dev/null
-ls /u01/install/scripts/ 2>/dev/null             # e.g. configstatic.sh
-source $APPL_TOP/APPS<CONTEXT>.env               # (verify) real name
-echo "$ADMIN_SCRIPTS_HOME $APPL_TOP $ORACLE_HOME"
+# as root:
+su - oracle -c "/u01/install/VISION/scripts/startvisiondb.sh"   # listener + DB
+su - oracle -c "/u01/install/APPS/scripts/startapps.sh"         # app tier
 
-# Database / listener
-lsnrctl status
-# EBS services (names vary)
-$ADMIN_SCRIPTS_HOME/adapcctl.sh status
-$ADMIN_SCRIPTS_HOME/adcmctl.sh status
-# or start/stop everything:
-# $ADMIN_SCRIPTS_HOME/adstrtal.sh        # start all (prompts for APPS password)
-# $ADMIN_SCRIPTS_HOME/adstpall.sh        # stop all
+# sanity / env
+su - oracle
+source /u01/install/APPS/apps/apps_st/appl/APPSEBSDB_ebs.env   # CONTEXT_NAME=EBSDB_ebs
+echo "$ADMIN_SCRIPTS_HOME $APPL_TOP $ORACLE_HOME"
+$ADMIN_SCRIPTS_HOME/adopmnctl.sh status                        # oacore/forms/oafm/OHS
 ```
+
+> **If the login page returns HTTP 500** (OC4J servlet error), the FND `.dbc` is
+> almost certainly still the shipped template (`DB_HOST=host_name`): run
+> `$ADMIN_SCRIPTS_HOME/adautocfg.sh appspass=apps` as `oracle`, then
+> `/u01/install/APPS/scripts/startapps.sh`.
+> **Timing:** OACORE/OAFM can read `Init` for ~30–60 s after start — wait and
+> re-check `adopmnctl.sh status` before concluding it failed.
 
 Verify the web tier (12.1.3 uses HTTP **8000** and DB **1521**; **not** 7001):
 ```bash
@@ -428,6 +442,8 @@ troubleshooting time on JRE security settings — see `RESEARCH.md` §7.
 | NIC is `eth1` after import | Delete `70-persistent-net.rules`, fix `ifcfg-eth0`, reboot. |
 | Login page times out | Guest IP/hostname mismatch; service not started; firewall. |
 | Services won't start after IP change | Re-run Autoconfig; check `/etc/hosts` + hostname. |
+| Login page **HTTP 500** (OC4J servlet error) | FND `.dbc` is still the shipped template (`DB_HOST=host_name`) → `adautocfg.sh appspass=apps` as `oracle`, then `startapps.sh`. |
+| OACORE/OAFM show `Init` right after start | Timing — wait 30–60 s, re-check `adopmnctl.sh status`. |
 | Forms won't launch | Applet needs **32-bit** Firefox ESR 52 + **32-bit Oracle JRE 8**; JWS needs server patches. See Step 9. |
 | `qm importdisk --format qcow2` errors | `qcow2` is invalid on LVM-thin → drop `--format` or use `dir`/ZFS. |
 | Product not on edelivery | Stop — catalog changes; confirm the 2014 "Virtual Appliances" pack is listed. |

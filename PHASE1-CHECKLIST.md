@@ -71,7 +71,8 @@ resolve before downloading tens of GB.
 - [ ] Confirm it is the **2014 "Virtual Appliances"** pack (Oracle Linux 6.5,
       OVM + VirtualBox compatible) — **not** the 2013 "Oracle VM Templates" pack
       (Oracle Linux 5 + a **Xen** kernel that won't boot on Proxmox). Single Node
-      VISION part numbers: **V46557-01 … V46562-01**.
+      VISION part numbers: **V46557-01 … V46563-01** (**seven** parts, 14 zips,
+      ~51.5 GB).
 - [ ] Confirm **no Support Identifier (CSI)** or payment is demanded; if so, STOP.
 - [ ] Record the exact product name + release/patch shown on screen
 
@@ -86,7 +87,9 @@ Release / patch:
 
 - [ ] Add the media pack to the cart → Continue
 - [ ] Accept the **Oracle Standard Terms and Restrictions**
-- [ ] Open the **media pack readme first** and record:
+- [ ] Open the **media pack readme / documentation** and record. **Note:** the
+      2014 pack we downloaded had **no readme inside the zips and no checksums**;
+      treat seeded passwords as try-first and verify on the VM:
   - [ ] exact filenames + count of parts
   - [ ] any published checksums
   - [ ] seeded OS / EBS / DB passwords (do **not** commit them to this repo)

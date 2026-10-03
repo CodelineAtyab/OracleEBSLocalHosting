@@ -77,8 +77,8 @@ deliver paid client work.
 - **Golden template** — pristine, shut down, snapshotted. Never boot it for class.
 - **Shared class instance** — one instance, many EBS users/responsibilities.
 - **Per-student instances** — **linked clones** (qcow2 backing chain on dir/ZFS, or
-  LVM-thin snapshots) so the ~150 GB base image is shared and each clone adds only
-  a small delta.
+  LVM-thin snapshots) so the **300 GiB** base disk (~243 GiB actually used) is
+  shared and each clone adds only a small delta.
 - **Client VMs** — one per student (OL7.9 + 32-bit Firefox ESR52 + 32-bit Oracle
   JRE 8) to run the Forms applet; accessed via noVNC or SPICE (§10).
 - **Staging VM** — throwaway; see `PLAN.md` §1.3.
@@ -134,13 +134,17 @@ df -h
    compatible with Oracle VM Manager **and** VirtualBox) — **not** the older 2013
    "Oracle VM Templates" pack (Oracle Linux 5 + a **Xen-PV** kernel that will not
    boot on Proxmox). The Single Node VISION pack's catalog part numbers are
-   **V46557-01 … V46562-01** (six entries, each split 1-of-2 / 2-of-2).
+   **V46557-01 … V46563-01** (**seven** entries, each split 1-of-2 / 2-of-2 = 14
+   zips, ~51.5 GB total).
 5. Continue → accept the Oracle Standard Terms and Restrictions → download the
    media pack. Download is free with a free Oracle account; **no Support
    Identifier (CSI) is required**. If the site demands a CSI or payment, STOP —
    that is a different product.
-6. Read the included **readme** — it lists the seeded OS/EBS passwords and the
-   exact part/file names.
+6. Look for a **readme** — it lists the exact part/file names and (sometimes) the
+   seeded OS/EBS passwords. **Caveat (verified 2026-10-02):** the actual 2014 pack
+   we downloaded had **no separate readme inside the zips and no published
+   checksums**; seeded passwords had to be taken from community sources and
+   verified on the VM. Treat any credential as *try-first, then change it*.
 
 > Availability caveat (checked 2026-09-29): Oracle's EBS VM page still lists the
 > 12.1.3 appliance and cites Doc 1906691.1, but the eDelivery catalog is now
@@ -175,8 +179,8 @@ cd /srv/ebs-media           # or wherever the shared staging folder is mounted
 for z in *.zip; do unzip -n "$z"; done
 
 # 2) Concatenate the split OVA parts into one file
-#    (adjust the exact names to match the media pack readme)
-cat Oracle-E-Business-Suite-12.1.3_VISION_INSTALL.ova.part* \
+#    (actual 2014 pack: each zip held Oracle-E-Business-Suite-12.1.3-VISION-INSTALL.ova.00 … .13)
+cat Oracle-E-Business-Suite-12.1.3-VISION-INSTALL.ova.* \
     > EBS1213_VISION.ova
 
 # 3) Extract the OVF + VMDK
@@ -229,8 +233,11 @@ Notes:
 - If networking is broken, check NIC name drift: OL6 normally uses `eth0`. Fix
   `/etc/udev/rules.d/70-persistent-net.rules` and
   `/etc/sysconfig/network-scripts/ifcfg-eth0` if it came up as `eth1`.
-- Keep the deployed disk reasonably sized (e.g. 150–200 GB) and **thin** where
-  possible.
+- The source VMDK is a **compressed `streamOptimized`** file (~54 GiB on disk)
+  with a **300 GiB virtual size**. `qm importdisk` expands it into a 300 GiB
+  LVM-thin volume that actually maps **~243 GiB** (the Vision install incl. the DB
+  filesystem). Do **not** shrink below 300 GiB — the guest expects its
+  `sda`/partition table.
 - This is an Oracle VM/VirtualBox appliance running on an **uncertified**
   Proxmox/KVM path — treat it like any OVA import.
 
@@ -238,7 +245,9 @@ Notes:
 
 ## 7. Phase 4 — First boot, network reconfigure, verification
 
-1. Boot the VM and log in with the seeded `root` credentials from the readme.
+1. Boot the VM and log in at the console (there was **no readme in the media**;
+   the seeded `root` password must be taken from community sources and verified,
+   then changed).
 2. Set a **static IP** on the lab VLAN and configure hostname + `/etc/hosts`.
 3. Reconfigure the EBS network/hostname per **MOS Doc 1906691.1** (listener,
    `tnsnames`, context file, then Autoconfig).
@@ -254,30 +263,48 @@ Notes:
    users, WebLogic/OC4J if applicable).
 
 ### Useful EBS environment
+**Actual layout (verified 2026-10-03):** the **apps tier** is under
+`/u01/install/APPS`; the **DB tier** is under `/u01/install/VISION`. The `oracle`
+OS user owns both, and **all AD/admin scripts must run as `oracle`** (not root).
+Appliance wrappers:
 ```bash
-# 2014 appliance layout: install dir is /u01/install/VISION with wrapper scripts
-ls /u01/install/VISION/ 2>/dev/null
-ls /u01/install/scripts/ 2>/dev/null      # e.g. configstatic.sh (set static IP+hostname)
-# Standard apps-tier env file is $APPL_TOP/APPS<CONTEXT>.env (name varies):
-source $APPL_TOP/APPS<CONTEXT>.env
-# Common admin script dirs:
-echo $ADMIN_SCRIPTS_HOME $COMMON_TOP $APPL_TOP   # ADMIN_SCRIPTS_HOME=$INST_TOP/admin/scripts
-$ADMIN_SCRIPTS_HOME/adautocfg.sh             # Autoconfig
-$ADMIN_SCRIPTS_HOME/adapcctl.sh status       # Apache
-$ADMIN_SCRIPTS_HOME/adcmctl.sh status        # Concurrent managers
-$ADMIN_SCRIPTS_HOME/adstrtal.sh              # start all (prompts for APPS password)
-$ADMIN_SCRIPTS_HOME/adstpall.sh              # stop all
+/u01/install/VISION/scripts/startvisiondb.sh   # listener + DB (run as oracle)
+/u01/install/APPS/scripts/startapps.sh         # app tier (run as oracle; feeds APPS pw)
+/u01/install/APPS/scripts/stopapps.sh          # stop app tier
 ```
-> Exact paths/script names vary by appliance revision — confirm on the VM.
-> This is not the 12.2 layout (`/u01/install/APPS/EBSapps.env`).
+Instance/env (verified):
+```bash
+source /u01/install/APPS/apps/apps_st/appl/APPSEBSDB_ebs.env   # CONTEXT_NAME=EBSDB_ebs
+echo "$ADMIN_SCRIPTS_HOME"        # = /u01/install/APPS/inst/apps/EBSDB_ebs/admin/scripts
+```
+Common admin scripts (run as `oracle`, after sourcing the env):
+```bash
+$ADMIN_SCRIPTS_HOME/adautocfg.sh appspass=apps  # AutoConfig — regenerates .dbc etc.
+$ADMIN_SCRIPTS_HOME/adopmnctl.sh  status        # OPMN: oacore/forms/oafm/OHS
+$ADMIN_SCRIPTS_HOME/adapcctl.sh   status        # Apache (OHS)
+$ADMIN_SCRIPTS_HOME/adoacorectl.sh status
+$ADMIN_SCRIPTS_HOME/adcmctl.sh    status        # concurrent managers
+$ADMIN_SCRIPTS_HOME/adstrtal.sh                 # start all (prompts for APPS password)
+$ADMIN_SCRIPTS_HOME/adstpall.sh                 # stop all
+```
+> **Gotcha (learned 2026-10-03):** `$INST_TOP/appl/fnd/12.0.0/secure/EBSDB.dbc`
+> must be **generated by AutoConfig**. If it is still the shipped `template.dbc`
+> (`DB_HOST=host_name`, `DB_PORT=port_number`), OACORE returns HTTP **500** on
+> `/OA_HTML/AppsLogin`. Fix with `adautocfg.sh appspass=apps` as `oracle`, then
+> restart the app tier.
+> **Do not** use `/u01/install/scripts/configwebentry.sh` here — it is hardcoded
+> to the context `EBSDB_apps`, but this instance is `EBSDB_ebs`. Prefer
+> `$ADMIN_SCRIPTS_HOME/adautocfg.sh`.
 
 ---
 
 ## 8. Phase 5 — Golden template and snapshots
 
 ```bash
-# Shut down cleanly, then snapshot the pristine state
-qm shutdown 9000
+# Stop the EBS tiers cleanly first (as oracle), then halt the OS:
+su - oracle -c "/u01/install/APPS/scripts/stopapps.sh"
+su - oracle -c "/u01/install/VISION/scripts/stopvisiondb.sh"
+ssh root@<ip> 'shutdown -h now'      # `qm shutdown 9000` times out — no acpid
 qm snapshot 9000 golden-clean --description "Pristine R12.1.3 Vision, pw changed"
 
 # Convert to a template (optional; keeps it from accidental boots)
@@ -285,6 +312,11 @@ qm template 9000
 ```
 
 Booting the golden VM for class is forbidden — clone it instead.
+
+> **Verified 2026-10-03:** `qm shutdown 9000` does **not** power off this guest
+> (ACPI power button ignored — no `acpid`). Either `ssh root@<ip> 'shutdown -h now'`
+> or `qm shutdown 9000 --forceStop 1`. Also stop the EBS tiers first so the DB
+> shuts down cleanly.
 
 ---
 
@@ -310,10 +342,19 @@ for i in $(seq -w 1 12); do
 done
 ```
 
-Networking: give each clone a unique static IP on `vmbr1` and matching
-`/etc/hosts`/DNS entry so the EBS hostname resolves. Keep hostnames consistent
-with the EBS context (changing the IP alone is usually fine; changing the
-hostname requires Autoconfig).
+Networking is the main gotcha: every clone is a **full EBS** configured for
+`ebs.example.com`, so several clones cannot answer to that one name on the same
+LAN. Either give each clone a **unique hostname + static IP** and re-run
+`$ADMIN_SCRIPTS_HOME/adautocfg.sh` as `oracle` (do **not** use `configwebentry.sh`
+— it is hardcoded to the `EBSDB_apps` context), with matching client `/etc/hosts`
+entries; or use the isolated **`vmbr1` VLAN + local DNS** so `ebs.example.com`
+resolves to each student's own sandbox. `vmbr1` is the cleaner, intended design.
+
+Access model: the class clone is for **functional** use — create **one EBS user
+per student** (SYSADMIN → Security → Users) and share the instance. Give each
+student their own **Apps DBA sandbox** clone for destructive admin practice, and
+their own **client VM** for Forms. HTML pages work in any browser; Forms needs
+the 32-bit Firefox ESR52 + Oracle JRE 8 client (§10).
 
 > **RAM budget:** 12×EBS (10 GB) + class (12 GB) + 12×client (2 GB) ≈ **156 GB of
 > ~188 GiB**. Cap how many EBS sandboxes run simultaneously.
@@ -411,6 +452,9 @@ concurrently. Add it only after the 12.1 lab is stable.
 | Login page blank / applet error | Client browser/JRE mismatch — see §10 and `PLAN.md` §1.4 (applet needs 32-bit FF ESR52 + 32-bit Oracle JRE 8) |
 | DB not up | Check listener (`lsnrctl status`), `$ORACLE_HOME`, alert log |
 | Services won't start after clone | Verify hostname/IP/`/etc/hosts`, run Autoconfig |
+| Login page **HTTP 500** (OC4J servlet error) | FND `.dbc` is still the shipped `template.dbc` (`DB_HOST=host_name`) → run `adautocfg.sh appspass=apps` as `oracle`, then `startapps.sh` |
+| OACORE/OAFM show `Init` right after start | Timing — wait 30–60 s; re-check `adopmnctl.sh status` (they go `Alive`) |
+| `qm shutdown` times out / VM stays running | Guest has no `acpid` → stop tiers, then SSH `shutdown -h now` (or `qm shutdown <id> --forceStop 1`) |
 | Out of space on host | Remove staging OVA/zips; use linked clones; check `lvs`/`df` |
 
 ---
