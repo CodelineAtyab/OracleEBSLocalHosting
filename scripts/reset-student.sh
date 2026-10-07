@@ -52,6 +52,12 @@ fi
 echo "== provisioning the fresh sandbox =="
 "$HERE/provision-sandbox.sh" "$EBS"
 
+# `qm destroy --purge` removed the VM's ACL — re-assert the student's access.
+u="stu$(printf %02d "$N")@pve"
+acl_ensure "$u" "$EBS"
+[ "$WITH_CLIENT" = 1 ] && acl_ensure "$u" "$CLI"
+echo "== re-applied ACL: $u on /vms/$EBS $([ "$WITH_CLIENT" = 1 ] && echo "+ /vms/$CLI") =="
+
 echo "== starting client VMs =="
 for c in $(client_rows | awk '{print $1}'); do qm start "$c" >/dev/null 2>&1 || true; done
 echo "== reset complete: student $N sandbox $EBS restored and healthy =="

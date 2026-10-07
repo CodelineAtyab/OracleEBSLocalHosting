@@ -10,6 +10,7 @@ case "$cmd" in
   init)         exec "$HERE/scripts/add-students.sh"       "$@" ;;
   provision)    exec "$HERE/scripts/provision-sandbox.sh"  "$@" ;;
   reset)        exec "$HERE/scripts/reset-student.sh"      "$@" ;;
+  sync-acls)    exec "$HERE/scripts/sync-acls.sh"          "$@" ;;
   class-users)  exec "$HERE/scripts/create-class-users.sh" "$@" ;;
   export)       exec "$HERE/scripts/export-images.sh"      "$@" ;;
   build-golden) exec "$HERE/scripts/build-golden.sh"       "$@" ;;
@@ -22,6 +23,7 @@ Usage: ./run.sh <command> [args]
   provision <vmid>       (re)configure / repair one EBS sandbox
   reset <student|vmid> [--client]
                          wipe a student's sandbox back to the template
+  sync-acls              re-assert student Proxmox users + VM ACLs
   class-users            create class EBS logins for all students
   export [--storage S]   back up golden + client template (DR)
   build-golden           rebuild the golden from pristine media (rare)

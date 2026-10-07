@@ -597,6 +597,7 @@ concurrently. Add it only after the 12.1 lab is stable.
 | OACORE/OAFM show `Init` right after start | Timing — wait 30–60 s; re-check `adopmnctl.sh status` (they go `Alive`) |
 | `qm shutdown` times out / VM stays running | Guest has no `acpid` → stop tiers, then SSH `shutdown -h now` (or `qm shutdown <id> --forceStop 1`) |
 | Out of space on host | Remove staging OVA/zips; use linked clones; check `lvs`/`df` |
+| Student can't see their VM in the Proxmox UI | **`qm destroy --purge` deletes the VM's ACL** → run `scripts/sync-acls.sh` to re-assert `PVEVMUser` on `/vms/91NN` + `/vms/92NN` |
 
 ---
 
@@ -626,7 +627,8 @@ make up | down | status | init N=8 | provision VM=9101 | class-users | export
 |--------|--------------|
 | `scripts/add-students.sh N` | Find N free IPs, linked-clone `9000`/`9200` → `91NN`/`92NN`, append to `inventory.conf`, provision each sandbox, boot the clients, create `stuNN@pve` + ACLs. |
 | `scripts/provision-sandbox.sh <vmid>` | (Re)configure/repair one EBS sandbox: IP + `/etc/hosts` (+`ARPCHECK=no`), javacache, `FND_NODES.SERVER_ADDRESS`, start EBS, verify 302. Handles the fresh-clone `.230` placeholder. **MAC-verified** — refuses to touch an address owned by another NIC. |
-| `scripts/reset-student.sh <student> [--client]` | Wipe a student's environment back to the pristine templates: destroy + re-clone the sandbox (`9000`) and, with `--client`, the client (`9200`), then re-provision. Keeps VMIDs + Proxmox users. **Destructive.** |
+| `scripts/reset-student.sh <student> [--client]` | Wipe a student's environment back to the pristine templates: destroy + re-clone the sandbox (`9000`) and, with `--client`, the client (`9200`), then re-provision. Keeps VMIDs + Proxmox users. **Destructive.** Re-asserts the ACL (see gotcha below). |
+| `scripts/sync-acls.sh` | Ensure every student's `stuNN@pve` exists and holds `PVEVMUser` on their two VMs. Run after a raw `qm destroy --purge`, or when a student "can't see their VM". |
 | `scripts/create-class-users.sh` | Ensure one EBS login per student (`STU01..`) on the shared class instance. |
 | `scripts/export-images.sh [--storage S]` | DR: `vzdump` the golden + client template. |
 | `scripts/build-golden.sh --yes` | Rare DR: rebuild the golden `9000` from pristine media (see §6–§8). |

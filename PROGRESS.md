@@ -219,6 +219,9 @@ qm set 9000 --sata0 local-lvm:vm-9000-disk-0   # SATA, not scsi0/LSI (sym53c8xx 
 - **Stale `known_hosts` blocks password SSH** ("Password authentication is disabled
   to avoid man-in-the-middle attacks") → use `-oUserKnownHostsFile=/dev/null` (or
   `ssh-keygen -R <ip>`).
+- **`qm destroy --purge` DELETES the VM's ACL** — after a destroy+re-clone a
+  student loses access to their VM in the Proxmox UI (they see only the other VM).
+  **Fix:** `scripts/sync-acls.sh` (also called by `reset-student.sh` after a clone).
 - **SSH "no matching host key type found … offer: ssh-rsa,ssh-dss"** — modern
   OpenSSH disabled `ssh-rsa`; OL6 only offers the legacy types. Fix on the client:
   `ssh -oHostKeyAlgorithms=+ssh-rsa root@192.168.100.223` (add
@@ -674,3 +677,11 @@ there is no `golden-clean` snapshot to roll back.
   `stu09@pve` (`PVEVMUser` on both VMs). Then `create-class-users.sh` created the
   **STU09** login on the class. Lab now = class + **9 sandboxes** (all `302`) + 9
   clients.
+- **2026-10-07 (cont.)** — **Fixed: students could not see their EBS VM in the
+  Proxmox UI.** Root cause: **`qm destroy --purge` DELETES the VM's ACL** — the
+  `reset-student.sh` test (destroy 9101) dropped `stu01`'s `/vms/9101`, and the
+  earlier `client-stu04` re-clone dropped `stu04`'s `/vms/9204`. Fix: new
+  `scripts/sync-acls.sh` (re-asserts each `stuNN@pve` + `PVEVMUser` on both VMs,
+  creates the user if missing) plus an `acl_ensure` call at the end of
+  `reset-student.sh`. Healed live; verified `stu01` sees `9101` + `9201` again via
+  the API. Wired as `run.sh sync-acls` / `make sync-acls`.

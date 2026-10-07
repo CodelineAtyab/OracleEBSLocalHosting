@@ -64,6 +64,10 @@ ip_mac() { arp-scan -I vmbr0 "$1" 2>/dev/null | awk -v ip="$1" '$1==ip{print tol
 # True if <ip> is answered by the NIC of VM <id>
 ip_is_vm() { [ -n "$(vm_mac "$2")" ] && [ "$(ip_mac "$1")" = "$(vm_mac "$2")" ]; }
 
+# Grant a Proxmox user PVEVMUser on a VM path (idempotent).
+# Needed because `qm destroy --purge` REMOVES the VM's ACL.
+acl_ensure() { pveum acl modify "/vms/$2" --users "$1" --roles PVEVMUser >/dev/null 2>&1; }
+
 # wait_ssh <ip> <seconds>  -> returns 0 if SSH answers
 wait_ssh() {
   local ip="$1" secs="${2:-300}" i

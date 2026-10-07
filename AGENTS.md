@@ -34,12 +34,13 @@ git-ignored `.env` and the VM list from `scripts/inventory.conf`.
 | **add N students** | `scripts/add-students.sh N` |
 | **fix / reconfigure one sandbox** | `scripts/provision-sandbox.sh <vmid>` |
 | **reset a student's sandbox** (wipe + re-clone; `--client` too) | `scripts/reset-student.sh <student> [--client]` |
+| **student can't see their VM** in the Proxmox UI (esp. after a reset) | `scripts/sync-acls.sh` |
 | **create the class EBS logins** (functional users) | `scripts/create-class-users.sh` |
 | **back up the golden + templates** (DR) | `scripts/export-images.sh` |
 | **rebuild the golden from pristine media** (rare, DR) | `scripts/build-golden.sh --yes` |
 
 Dependency-free wrapper: `./run.sh up | down [--poweroff] | status | init N |
-provision <vmid> | reset <student> [--client] | class-users | export | build-golden`
+provision <vmid> | reset <student> [--client] | sync-acls | class-users | export | build-golden`
 (an optional `Makefile` exposes the same as `make up`, `make init N=3`, …).
 
 **Rules:** never keep operational logic in `/tmp` (tmpfs — wiped on reboot; only
