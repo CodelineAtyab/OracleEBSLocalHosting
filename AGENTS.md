@@ -20,6 +20,32 @@ optionally Step 9 (MVP-B), then `README.md` §9–§11 for the full lab. Start b
 running host verification (`README.md` §3) and confirming the appliance is still
 on edelivery (`PHASE1-CHECKLIST.md` §3).
 
+## Action → script (what to run when the user asks)
+
+Use these **repo scripts** instead of ad-hoc commands. They read secrets from the
+git-ignored `.env` and the VM list from `scripts/inventory.conf`.
+
+| If the user asks to… | Run |
+|----------------------|-----|
+| **bring the lab up** / start everything (e.g. after a reboot) | `scripts/lab-start.sh` |
+| **stop the lab** | `scripts/lab-stop.sh` |
+| **shut the whole host down** (e.g. to enter BIOS) | `scripts/lab-stop.sh --poweroff` |
+| **check status** — "is the lab up?" | `scripts/lab-status.sh` |
+| **add N students** | `scripts/add-students.sh N` |
+| **fix / reconfigure one sandbox** | `scripts/provision-sandbox.sh <vmid>` |
+| **reset a student's sandbox** (wipe + re-clone; `--client` too) | `scripts/reset-student.sh <student> [--client]` |
+| **create the class EBS logins** (functional users) | `scripts/create-class-users.sh` |
+| **back up the golden + templates** (DR) | `scripts/export-images.sh` |
+| **rebuild the golden from pristine media** (rare, DR) | `scripts/build-golden.sh --yes` |
+
+Dependency-free wrapper: `./run.sh up | down [--poweroff] | status | init N |
+provision <vmid> | reset <student> [--client] | class-users | export | build-golden`
+(an optional `Makefile` exposes the same as `make up`, `make init N=3`, …).
+
+**Rules:** never keep operational logic in `/tmp` (tmpfs — wiped on reboot; only
+`scripts/` survives). Never commit secrets — they live in `.env` (mode `600`).
+See `README.md` §14 for the full script reference.
+
 ## What this project is
 Build and maintain a **free, offline Oracle E-Business Suite (EBS) training lab**
 on a single Proxmox host, so students (and each new cohort) can practise EBS
@@ -88,13 +114,13 @@ functional and Apps DBA skills at zero license cost.
 ```
 ebs1213-golden  (VM 9000, Proxmox TEMPLATE, stopped -- no snapshot)
    |-- ebs1213-class        (VM 9010, full clone, static .223, shared functional)
-   `-- ebs1213-stu01..05    (VMs 9101-9105, linked clones, static .231-.235,
-                             Apps DBA sandboxes)      [target: stu06..12 -> 9106-9112]
+   `-- ebs1213-stu01..09    (VMs 9101-9109, linked clones; static .231-.235 + .241-.244,
+                             Apps DBA sandboxes)      [target: stu10..12 -> 9110-9112]
 client-template (VM 9200, OL7.9 + Xfce + Firefox ESR52 x64 + OpenJDK8/IcedTea-Web)
-   `-- client-stu01..05     (VMs 9201-9205, linked clones, DHCP) [target: 9206-9212]
+   `-- client-stu01..09     (VMs 9201-9209, linked clones, DHCP) [target: 9210-9212]
 network: vmbr0 192.168.100.0/24 -- EBS on static IPs + /etc/hosts; clients DHCP
-         (isolated vmbr1 lab VLAN still planned, not built)
-access:  Proxmox web UI :8006 -> noVNC; users stu01-stu05@pve (PVEVMUser, scoped)
+         (flat-LAN DHCP pool overlaps the static range -> pick ARP-free IPs; vmbr1 planned)
+access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped)
 ```
 
 ## Per-instance sizing (R12.1.3)
@@ -125,7 +151,7 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu05@pve (PVEVMUser, scoped
 
 ## Client VM (`client-*`) — template `9200` BUILT 2026-10-03
 - OS: **Oracle Linux 7.9 (64-bit)** (minimal install); one template **9200** →
-  clones **9201–9212**. Built VM: 2 vCPU / **2 GB** / 30 GB, virtio, DHCP.
+  clones **9201–9212** (built `9201–9209`). Built VM: 2 vCPU / **2 GB** / 30 GB, virtio, DHCP.
 - Desktop: **Xfce** (from the archived EPEL 7 repo) with **lightdm autologin**
   (`student` user) — light enough for 2 GB.
 - Stack (free path): **Firefox ESR 52.9.0esr x86_64** + **java-1.8.0-openjdk
@@ -138,7 +164,7 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu05@pve (PVEVMUser, scoped
   the applet (Oracle JRE is the only source of `libnpjp2.so`).
 - Access: **noVNC in-browser** (default; needs a Proxmox user with `VM.Console`),
   **SPICE** optional (`vga: qxl` + `virt-viewer`). RDP rejected on OL7.
-- **Student accounts (2026-10-03):** Proxmox users `stu01–stu05@pve` (password =
+- **Student accounts (2026-10-07):** Proxmox users `stu01–stu09@pve` (password =
   lab password) with role **`PVEVMUser`** on `/vms/920N` (client) + `/vms/910N`
   (sandbox) — noVNC/power for their own two VMs only. Client VMs are
   **manual-start** (no `onboot`).
@@ -149,14 +175,22 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu05@pve (PVEVMUser, scoped
 - Staging VM (`ebs-staging`): **900** — **retired 2026-10-03** (media kept at `/srv/ebs-media`)
 - Golden template VMID: **9000** (Proxmox **template**; templates cannot hold snapshots)
 - Shared class VMID: **9010** (static `192.168.100.223`)
-- Student EBS clones: **9101–9112** (built `9101–9105`, static `.231–.235`)
+- Student EBS clones: **9101–9112** (built `9101–9109`; static `.231–.235` + `.241–.244`)
 - Client template VMID: **9200**
-- Student client clones: **9201–9212** (built `9201–9205`, DHCP)
-- Student Proxmox users: **`stu01–stu05@pve`** (role `PVEVMUser`)
+- Student client clones: **9201–9212** (built `9201–9209`, DHCP)
+- Student Proxmox users: **`stu01–stu09@pve`** (role `PVEVMUser`)
 - Proxmox storage in examples: `local-lvm` (adjust to the actual host)
 
 ## Common commands
 ```bash
+# --- lab control (repo scripts/ — use these instead of ad-hoc commands) ---
+scripts/lab-start.sh              # boot all EBS VMs + start DB/app tiers + boot clients
+scripts/lab-start.sh ebs          # EBS guests only   (clients only: scripts/lab-start.sh clients)
+scripts/lab-status.sh             # VM states + AppsLogin code per EBS guest
+scripts/lab-stop.sh               # cleanly stop all guests (leave host up)
+scripts/lab-stop.sh --poweroff    # ...then power off the host
+# inventory (VMID -> name -> role -> IP) is in scripts/inventory.conf; secrets in .env
+
 # host checks
 pveversion; lscpu; pvesm status; vgs; lvs; df -h
 
@@ -204,10 +238,10 @@ relevant; do not imply the setup is legally "licensed for training."
 - Docs written (`README.md`, `AGENTS.md`, `PLAN.md`, `RESEARCH.md`,
   `MVP-RUNBOOK.md`, `PHASE1-CHECKLIST.md`). **Live execution state: `PROGRESS.md`.**
 - **Done:** Stages 0–6 (host verify → golden VM `9000` booting EBS; MVP-A); MVP-B
-  (Forms from client VM) passed. **Live (2026-10-03):** golden `9000` templatized;
-  class `9010` (`.223`); **EBS sandboxes `9101–9105`** (`.231–.235`, all `302`);
-  client template `9200` + clones `9201–9205`; Proxmox users `stu01–stu05@pve`.
-  Full detail: `PROGRESS.md` Stages 7–9.
+  (Forms from client VM) passed. **Live (2026-10-07):** golden `9000` templatized;
+  class `9010` (`.223`); **EBS sandboxes `9101–9109`** (`.231–.235` + `.241–.244`,
+  all `302`); client template `9200` + clones `9201–9209`; Proxmox users
+  `stu01–stu09@pve`. Full detail: `PROGRESS.md` Stages 7–10.
 - **Key fixes:** EBS VMs need **`--cpu Westmere`** (host panics the OL6 UEK
   kernel); SSH to the appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**; the FND
   `.dbc` must be **generated by AutoConfig** (`adautocfg.sh appspass=apps`), not
@@ -219,12 +253,12 @@ relevant; do not imply the setup is legally "licensed for training."
   (`$ADMIN_SCRIPTS_HOME/adautocfg.sh appspass=apps` as `oracle`), then
   `startapps.sh`. `AppsLogin` now 302 → login form; all OC4J services `Alive`.
   Details in `PROGRESS.md` "Stage 5 blocker".
-- **Next (post-MVP):** class `9010` + **EBS sandboxes `9101–9105` LIVE** (all
-  `302`) and client clones `9201–9205` created. **Per-student Proxmox users
-  `stu01–stu05@pve`** (password = lab) hold `PVEVMUser` on `/vms/920N` +
-  `/vms/910N` for noVNC. Next: expand to 12; optional `vmbr1` VLAN. **Never boot
-  9000 for class; clone it.** EBS clones need `FND_NODES.SERVER_ADDRESS` set to
-  their own IP or OACORE 500s (see `PROGRESS.md` "Stage 9").
+- **Live (2026-10-07):** class `9010` + **EBS sandboxes `9101–9109` (`302`)** +
+  client clones `9201–9209`; **Proxmox users `stu01–stu09@pve`** (password = lab)
+  hold `PVEVMUser` on `/vms/920N` + `/vms/910N` for noVNC. Next: expand with
+  `scripts/add-students.sh N`; optional `vmbr1` VLAN. **Never boot 9000; clone it.**
+  EBS clones need `FND_NODES.SERVER_ADDRESS` = their own IP (see `PROGRESS.md`
+  "Stage 9/10"); on a flat LAN pick ARP-free static IPs.
 - **Assumes:** `qm shutdown` does **not** power off the guest (no acpid) — use a
   clean SSH `shutdown -h now` (documented in `PROGRESS.md` Stage 6).
 - Resolved 2026-09-29 (client stack **updated 2026-10-03**): platform **12.1.3**;

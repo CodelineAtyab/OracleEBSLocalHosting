@@ -8,11 +8,11 @@ The goal is upskilling: give each student (and each new cohort) a working EBS
 environment to practise on — functional navigation and setups, plus Apps DBA
 work (patching, Autoconfig, cloning, admin utilities, DB administration).
 
-> **Status (2026-10-03): live.** Golden `9000` is a Proxmox **template**; the
-> shared class `9010` (`.223`) and five Apps-DBA sandboxes `9101–9105`
-> (`.231–.235`) run EBS 12.1.3 (`302`); five Forms client VMs `9201–9205` run the
-> legacy applet; Proxmox users `stu01–stu05@pve` get scoped **noVNC** access.
-> Live state: `PROGRESS.md`.
+> **Status (2026-10-07): live.** Golden `9000` is a Proxmox **template**; the
+> shared class `9010` (`.223`) and **nine** Apps-DBA sandboxes `9101–9109`
+> (`.231–.235`, `.241–.244`) run EBS 12.1.3 (`302`); nine Forms client VMs
+> `9201–9209` run the legacy applet; Proxmox users `stu01–stu09@pve` get scoped
+> **noVNC** access. Live state: `PROGRESS.md`.
 
 ---
 
@@ -73,9 +73,9 @@ flowchart TB
         GOLDEN --- GOLDDISK
 
         CLASS["VM 9010 · ebs1213-class · 192.168.100.223<br/>full clone — shared functional instance"]
-        EBSBOX["VMs 9101–9105 · ebs1213-stuNN · .231–.235<br/>linked clones (→ 9112 planned)<br/>per-student Apps DBA sandboxes"]
+        EBSBOX["VMs 9101–9109 · ebs1213-stuNN · .231–.235 + .241–.244<br/>linked clones (→ 9112 planned)<br/>per-student Apps DBA sandboxes"]
         CTMPL["VM 9200 · client-template<br/>OL7.9 + Xfce + FF ESR52 x64<br/>+ OpenJDK 8 / IcedTea-Web"]
-        CLIENT["VMs 9201–9205 · client-stuNN · DHCP (.226–.230)<br/>linked clones (→ 9212 planned)<br/>Forms desktops via noVNC / SPICE"]
+        CLIENT["VMs 9201–9209 · client-stuNN · DHCP<br/>linked clones (→ 9212 planned)<br/>Forms desktops via noVNC / SPICE"]
 
         GOLDEN ==>|"full clone"| CLASS
         GOLDEN ==>|"linked clones (--full 0)"| EBSBOX
@@ -87,10 +87,10 @@ flowchart TB
     end
 
     subgraph PVEUI["Proxmox web UI (https :8006)"]
-        USERS["users stu01–stu05@pve<br/>role PVEVMUser on their own 2 VMs"]
+        USERS["users stu01–stu09@pve<br/>role PVEVMUser on their own 2 VMs"]
     end
 
-    subgraph WHO["5 trainees (LAN-only, offline)"]
+    subgraph WHO["9 trainees (LAN-only, offline)"]
         FUNC["Functional learner<br/>HTML in any browser"]
         ADM["Apps DBA learner<br/>SSH / console → own sandbox"]
         FORM["Forms learner<br/>client-VM desktop via noVNC"]
@@ -128,7 +128,7 @@ flowchart TB
   then uses the bundled Firefox ESR52 + Java (IcedTea-Web) to launch Forms from the
   EBS URL. This is the *only* reason the client VMs exist.
 - **Apps DBA learning — own sandbox.** Trainees get **SSH/console into their own EBS
-  sandbox clone** (`9101–9105`, expanding to 9112) and practise destructive admin safely.
+  sandbox clone** (`9101–9109`, expanding to 9112) and practise destructive admin safely.
 - **Names.** Each EBS clone keeps the hostname `ebs.example.com` but gets a **unique
   static IP**, and each guest's `/etc/hosts` maps that name to its own IP — so no
   per-clone AutoConfig is needed. (An isolated `vmbr1` VLAN + local DNS remains an
@@ -140,10 +140,10 @@ flowchart TB
 | **Golden base** | 9000 | Configured, password-changed R12.1.3 Vision (DB + app in one VM) | Source of truth for every clone; **`qm template` — stopped, never booted for class** |
 | **Reset by re-clone** | — | Delete a clone and re-clone from the template (`--full 0`) | Wipes a cohort's changes; cheap because clones are linked (a template cannot hold snapshots) |
 | **Shared class instance** | 9010 | Full clone of 9000 · **static `192.168.100.223`** | Functional practice for students at once (one EBS user each); also the Forms target |
-| **Student EBS sandboxes** | 9101–9105 (→9112) | Linked clones of 9000 · **static `.231–.235`** | Per-student **Apps DBA**: start/stop, `adadmin`, `adpatch`, AutoConfig, concurrent managers, cloning, RMAN |
+| **Student EBS sandboxes** | 9101–9109 (→9112) | Linked clones of 9000 · **static `.231–.235`, `.241–.244`** | Per-student **Apps DBA**: start/stop, `adadmin`, `adpatch`, AutoConfig, concurrent managers, cloning, RMAN |
 | **Client template** | 9200 | OL7.9 + Xfce + Firefox ESR52 x64 + OpenJDK 8 + IcedTea-Web | Base image that runs the Forms applet |
-| **Client clones** | 9201–9205 (→9212) | Linked clones of 9200 · DHCP | Each student's Forms desktop, reached via noVNC / SPICE |
-| **Proxmox student users** | — | `stu01–stu05@pve`, role `PVEVMUser` on their client + sandbox | Scoped noVNC console/power access to their own two VMs only |
+| **Client clones** | 9201–9209 (→9212) | Linked clones of 9200 · DHCP | Each student's Forms desktop, reached via noVNC / SPICE |
+| **Proxmox student users** | — | `stu01–stu09@pve`, role `PVEVMUser` on their client + sandbox | Scoped noVNC console/power access to their own two VMs only |
 | **Staging VM** | — | Debian VM **retired 2026-10-03** (media kept on `/srv/ebs-media`) | Only downloaded/extracted the appliance; no longer present |
 | **Lab network** | `vmbr0` | 192.168.100.0/24 — EBS static IPs + `/etc/hosts`; clients DHCP | Name resolution via `/etc/hosts` (`ebs.example.com` → class). Isolated `vmbr1` VLAN still planned |
 
@@ -162,18 +162,19 @@ Proxmox VE 9.2.20 host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 |
 |  VM 9000  ebs1213-golden   [TEMPLATE -- stopped, never booted for class]
 |     |-- full clone -------->   VM 9010  ebs1213-class  .223   (functional, shared)
-|     `-- linked clones ----->   VMs 9101-9105  ebs1213-stuNN  .231-.235  (Apps DBA each)
-|                                (target: stu06-12 -> 9106-9112)
+|     `-- linked clones ----->   VMs 9101-9109  ebs1213-stuNN  .231-.235 + .241-.244
+|                                (Apps DBA each; target: stu10-12 -> 9110-9112)
 |
 |  VM 9200  client-template  (OL7.9 + Xfce + FF ESR52 x64 + OpenJDK8/IcedTea-Web)
-|     `-- linked clones ----->   VMs 9201-9205  client-stuNN  DHCP .226-.230  (Forms desktops)
-|                                (target: stu06-12 -> 9206-9212)
+|     `-- linked clones ----->   VMs 9201-9209  client-stuNN  DHCP  (Forms desktops)
+|                                (target: stu10-12 -> 9210-9212)
 |
 `  network: vmbr0 192.168.100.0/24  -- EBS static IPs + /etc/hosts; clients DHCP
-             (isolated vmbr1 lab VLAN still planned, not built)
+             (flat-LAN pool overlaps the static range -- pick ARP-free IPs;
+              isolated vmbr1 lab VLAN still planned)
                        |
       Proxmox web UI (:8006) --> noVNC console
-      users stu01-stu05@pve (role PVEVMUser, scoped to their own 2 VMs)
+      users stu01-stu09@pve (role PVEVMUser, scoped to their own 2 VMs)
                        |
    +-----------------+------------------+---------------------+
    |                 |                  |                     |
@@ -195,7 +196,7 @@ Proxmox VE 9.2.20 host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 | 12 × client clones | 2 each | 2 GB each | linked deltas |
 
 RAM: 12×12 + 12 + 12×2 = **~180 GB of ~188 GiB** — very tight; **cap how many EBS
-sandboxes run at once** (5 sandboxes + class + clients currently use ~45 GiB).
+sandboxes run at once** (10 EBS instances + 9 clients currently use ~45 GiB).
 Storage: golden ~300 GiB + class full clone + deltas ≈ **800–900 GiB of 1.67 TiB**,
 and only fits because clones are linked. Full detail: `PLAN.md` §2.1.
 
@@ -478,6 +479,13 @@ commit;
 JTF distributed cache then tries to use). The alternative **`vmbr1` VLAN + local
 DNS** design is still a future refinement — see §9 / `PROGRESS.md` "Stage 9".
 
+> **On the flat LAN (no VLAN):** the router's DHCP pool overlaps the static range,
+> so a chosen static IP may already be answered by another device. OL6 `ifup` then
+> **refuses the address and the clone boots with no IPv4**. Always confirm with
+> `arp-scan -I vmbr0 192.168.100.0/24` before assigning — that's why sandboxes
+> `9106–9108` use `.241–.243`, not `.236–.238`. Best fix: reserve a block on the
+> router (or move the lab to `vmbr1`).
+
 Access model: the class clone is for **functional** use — create **one EBS user
 per student** (SYSADMIN → Security → Users) and share the instance. Give each
 student their own **Apps DBA sandbox** clone for destructive admin practice, and
@@ -592,7 +600,62 @@ concurrently. Add it only after the 12.1 lab is stable.
 
 ---
 
-## 14. Repository files
+## 14. Lab control scripts
+
+Repo-tracked helpers for operating and rebuilding the lab. They read secrets from
+the git-ignored `.env` (mode 600) and the VM list from `scripts/inventory.conf`,
+so **no secrets live in the repo**. Everything lives in `scripts/` — never `/tmp`
+(tmpfs, wiped on reboot).
+
+### Entrypoint
+```bash
+./run.sh <command> [args]                 # no dependencies beyond bash
+# or, if `make` is installed (apt install make):
+make up | down | status | init N=8 | provision VM=9101 | class-users | export
+```
+
+### Daily operations
+| Script | What it does |
+|--------|--------------|
+| `scripts/lab-start.sh` | Boot every EBS VM, start the Oracle DB + app tier, wait for `AppsLogin`=302, then boot the client VMs. `lab-start.sh ebs` / `clients` does one half. Honours `CONCURRENCY` (default 4). |
+| `scripts/lab-stop.sh` | Cleanly stop the lab (EBS: `stopapps`→`stopvisiondb`→`shutdown`; clients: `qm stop`; unrelated VM 100 graceful). `--poweroff` also powers off the host. |
+| `scripts/lab-status.sh` | Table of each VM's state plus the `AppsLogin` code for running EBS guests. |
+
+### Lifecycle / maintenance
+| Script | What it does |
+|--------|--------------|
+| `scripts/add-students.sh N` | Find N free IPs, linked-clone `9000`/`9200` → `91NN`/`92NN`, append to `inventory.conf`, provision each sandbox, boot the clients, create `stuNN@pve` + ACLs. |
+| `scripts/provision-sandbox.sh <vmid>` | (Re)configure/repair one EBS sandbox: IP + `/etc/hosts` (+`ARPCHECK=no`), javacache, `FND_NODES.SERVER_ADDRESS`, start EBS, verify 302. Handles the fresh-clone `.230` placeholder. **MAC-verified** — refuses to touch an address owned by another NIC. |
+| `scripts/reset-student.sh <student> [--client]` | Wipe a student's environment back to the pristine templates: destroy + re-clone the sandbox (`9000`) and, with `--client`, the client (`9200`), then re-provision. Keeps VMIDs + Proxmox users. **Destructive.** |
+| `scripts/create-class-users.sh` | Ensure one EBS login per student (`STU01..`) on the shared class instance. |
+| `scripts/export-images.sh [--storage S]` | DR: `vzdump` the golden + client template. |
+| `scripts/build-golden.sh --yes` | Rare DR: rebuild the golden `9000` from pristine media (see §6–§8). |
+
+### Support files
+| File | Purpose |
+|------|---------|
+| `scripts/inventory.conf` | Single source of truth: `VMID → name → role → IP`. Edit when adding/removing students. |
+| `scripts/lib.sh` | Shared helpers (loads `.env`, SSH to guests). Sourced, not run. |
+| `scripts/guest/*.sh` | Scripts that run **inside** a guest: `set-ip.sh`, `provision.sh`, `create-ebs-user.sh`, `golden-firstboot.sh`. |
+
+```bash
+# bring the whole lab up (e.g. after a host reboot)
+scripts/lab-start.sh
+# check it
+scripts/lab-status.sh
+# shut it all down cleanly; optionally power off the host
+scripts/lab-stop.sh
+scripts/lab-stop.sh --poweroff
+```
+
+**Addressing caveat:** on the flat LAN the router's DHCP pool overlaps the static
+range, so an IP may already be in use — `add-students.sh` ARP-scans for free
+addresses and `provision-sandbox.sh` refuses an address owned by a different MAC.
+The robust fix remains an isolated `vmbr1` VLAN or DHCP reservations (see §9).
+
+---
+
+## 15. Repository files
 
 | File | Purpose |
 |------|---------|
@@ -603,10 +666,13 @@ concurrently. Add it only after the 12.1 lab is stable.
 | `RESEARCH.md` | Platform research + decision record (12.1.3 vs 12.2.12, sources) |
 | `MVP-RUNBOOK.md` | Literal step-by-step for the first working instance (MVP-A/B) |
 | `PHASE1-CHECKLIST.md` | Tickable Phase 1 execution checklist (host verify + appliance download) |
+| `scripts/` | Operate + rebuild the lab: `lab-start/stop/status.sh`, `add-students.sh`, `provision-sandbox.sh`, `reset-student.sh`, `create-class-users.sh`, `export-images.sh`, `build-golden.sh`, `inventory.conf`, `lib.sh`, `guest/` (see §14) |
+| `run.sh` | Dependency-free entrypoint: `./run.sh up|down|status|init N|...` |
+| `Makefile` | Optional same commands for `make` users (`make up`, `make init N=3`) |
 
 ---
 
-## 15. References
+## 16. References
 
 - Oracle Software Delivery Cloud — <https://edelivery.oracle.com>
 - Oracle VM Templates for E-Business Suite —

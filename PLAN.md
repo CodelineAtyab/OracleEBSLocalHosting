@@ -52,10 +52,10 @@ Simple defaults to adopt now:
 
 ### Deferred until after the MVP (optimise later)
 - Shared class instance + 12 linked EBS clones (`--full 0`) and clone tuning.
-  **Built 2026-10-03:** class `9010` + sandboxes `9101–9105` live (**5 of 12**);
-  scaling to 12 pending.
+  **Built 2026-10-03 → 2026-10-07:** class `9010` + sandboxes `9101–9109` live
+  (**9 of 12**); scaling to 12 pending.
 - Per-student client VMs (build the client template 9200 → clones 9201–9212, §1.4).
-  **Built 2026-10-03:** template `9200` + clones `9201–9205` (**5 of 12**).
+  **Built 2026-10-03 → 2026-10-07:** template `9200` + clones `9201–9209` (**9 of 12**).
 - Optional **JWS migration** on 12.1.3 (server-side patches) — not needed for the
   chosen legacy-applet client.
 - LXC/Docker helper services (file server, DNS) and Ansible automation.
@@ -191,7 +191,7 @@ RAM check: 12×12 (EBS) + 12 (class) + 12×2 (clients) ≈ **180 GB of ~188 GiB*
 (~8 GB host headroom). **Very tight:** running all 12 EBS sandboxes + 12 clients +
 class at once fills RAM — cap concurrent sandboxes (e.g. ~5–8) or accept swap
 risk. Clients at 4 GB each would not fit; keep them at **2 GB**. (As built
-2026-10-03: 6 EBS instances + 5 clients run in ~45 GiB.)
+2026-10-07: 10 EBS instances + 9 clients run in ~45 GiB.)
 Storage check: the golden disk is 300 GiB *virtual* and actually maps **~243 GiB**
 (Vision DB filesystem). A full clone (class) duplicates that ~243 GiB; linked
 clones share it and store only deltas. So base + class ≈ **~0.5 TiB**, leaving
