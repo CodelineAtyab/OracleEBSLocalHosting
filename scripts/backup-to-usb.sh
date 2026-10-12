@@ -11,6 +11,9 @@
 #   --with-media      also copy the pristine appliance media (/srv/ebs-media)
 #
 # The backup dir gets a self-contained restore-ebs-lab.sh you run on the new host.
+#
+# Deliberately EXCLUDES host secrets / remote-access config: /root/.bash_history
+# and /etc/cloudflared (the Proxmox access tunnel). Never add them to a backup.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -74,6 +77,11 @@ fi
 echo "== shipping the restore script =="
 cp -a "$HERE/restore-ebs-lab.sh" "$DEST/restore-ebs-lab.sh" 2>/dev/null || true
 chmod 755 "$DEST/restore-ebs-lab.sh" 2>/dev/null || true
+
+# Safety: never ship host secrets / remote-access config (bash history, the
+# Proxmox access-tunnel token, etc.). Strip them if a future edit pulled them in.
+find "$DEST" \( -iname '*bash_history*' -o -path '*cloudflared*' -o -name 'token' \) -print0 2>/dev/null \
+  | while IFS= read -r -d '' f; do rm -rf "$f" 2>/dev/null; echo "  removed (not allowed in backup): $f"; done
 
 echo "== manifest + checksums =="
 { echo "EBS lab backup"; echo "host: $(hostname)"; echo "pve: $(pveversion)"; echo "date: $(date)"; echo

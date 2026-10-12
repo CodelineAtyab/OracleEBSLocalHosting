@@ -788,6 +788,13 @@ there is no `golden-clean` snapshot to roll back.
   client template `9200` 3.6 GB, pristine media 55 GB, repo tarball incl. `.env`, host
   config, restore script + manifest). Every file (25) **sha256-verified OK**. The prior
   `ebs-lab-backup-20261011-2058` was **removed** (superseded).
+- **2026-10-12 (cont.)** — **Remote-access audit — repo/backup clean.** Swept the
+  repo, its git history, `.env`, `prompts.txt`, the docs and the USB backup for any
+  trace of the host's out-of-band access path: **none found** (docs use only the
+  placeholder `https://<pve-host>:8006`; the two "tunnel over SSH" hits are generic
+  VNC advice). Hardened so it can't recur: **`backup-to-usb.sh`** now strips
+  `/root/.bash_history` and any `*cloudflared*`/`token` file from a backup, and
+  **`AGENTS.md`** forbids documenting remote-access details.
 - **2026-10-12** — **Destroyed VM 100** (`qm destroy 100 --purge`) to free its
   ~30 GB thin volume; removed the now-dead VM-100 step from `scripts/lab-stop.sh`
   and the doc references. The host now runs only lab VMs.

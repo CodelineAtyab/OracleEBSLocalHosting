@@ -278,6 +278,11 @@ relevant; do not imply the setup is legally "licensed for training."
   mode-`600`, git-ignored `.env` in this directory; **never** commit it or paste
   its contents into tracked docs. The Oracle account credentials and the
   edelivery `wget` token must never touch the repo.
+- **Never record remote-access details.** The host may be reached from outside
+  the LAN via an out-of-band tunnel; do **not** document the tunnel, its
+  hostname, its token, or how to reach the Proxmox UI remotely. Docs keep only
+  the placeholder `https://<pve-host>:8006`. The DR backup on purpose excludes
+  `/root/.bash_history` and `/etc/cloudflared` (`backup-to-usb.sh` strips them).
 - Keep everything reproducible: commands belong in `README.md`.
 - **Canonical credentials:** EBS student logins are **`STU01..STUNN` / `@codeline@`**
   (from `.env`). This is **enforced**: `create-class-users.sh` always (re)sets each
