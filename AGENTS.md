@@ -36,12 +36,29 @@ git-ignored `.env` and the VM list from `scripts/inventory.conf`.
 | **reset a student's sandbox** (wipe + re-clone; `--client` too) | `scripts/reset-student.sh <student> [--client]` |
 | **student can't see their VM** in the Proxmox UI (esp. after a reset) | `scripts/sync-acls.sh` |
 | **create the class EBS logins** (functional users) | `scripts/create-class-users.sh` |
-| **back up the golden + templates** (DR) | `scripts/export-images.sh` |
+| **reset an EBS login password** (e.g. a student's) | `scripts/reset-ebs-password.sh <user> <password>` — or `--students` for all |
+| **back up the golden + templates** (DR, in place) | `scripts/export-images.sh` |
+| **back up *everything* to a disk** (USB/DR, single restore script) | `scripts/backup-to-usb.sh <mount> [--with-class] [--with-sandboxes] [--with-media]` |
+| **rebuild the lab from templates** (fresh host) | `scripts/lab-rebuild.sh [N]` |
 | **rebuild the golden from pristine media** (rare, DR) | `scripts/build-golden.sh --yes` |
+| **rebuild the client template with the dev/DB tools** (destroys + recreates clients) | `scripts/client/build-client-template.sh` |
+| **guest agent on EBS VMs** (IP/metrics in Proxmox) | `scripts/install-ebs-guest-agent.sh [vmid…]` · golden: `scripts/fix-golden-agent.sh` |
+| **give students their VNC address/PIN** | `scripts/client/vnc-credentials.sh` |
+| **write/refresh each student's credentials sheet** (`your_access.txt`) | `scripts/client/write-access-file.sh [vmid…]` |
 
-Dependency-free wrapper: `./run.sh up | down [--poweroff] | status | init N |
-provision <vmid> | reset <student> [--client] | sync-acls | class-users | export | build-golden`
+Dependency-free wrapper: `./run.sh up | down [--poweroff] | status | init N | rebuild [N] |
+provision <vmid> | reset <student> [--client] | sync-acls | class-users | access-files | vnc |
+backup <mount> | export | build-golden`
 (an optional `Makefile` exposes the same as `make up`, `make init N=3`, …).
+
+**Disaster recovery:** `scripts/backup-to-usb.sh <mount> [--with-media|--with-class|--with-sandboxes]`
+writes a dated dir (VM dumps + repo incl. `.env` + host config) and drops a
+**self-contained `restore-ebs-lab.sh`**. The recommended **base** backup is
+`--with-media` (golden + client templates + pristine VMDK for offline golden
+rebuild); the class and sandboxes are **not** stored — they are recreated on
+restore by `lab-rebuild.sh`. On a fresh Proxmox host, mount the disk and run that
+one script. Add students later with `scripts/add-students.sh N`. See `README.md`
+§14.
 
 **Rules:** never keep operational logic in `/tmp` (tmpfs — wiped on reboot; only
 `scripts/` survives). Never commit secrets — they live in `.env` (mode `600`).
@@ -152,7 +169,7 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped
 
 ## Client VM (`client-*`) — template `9200` BUILT 2026-10-03
 - OS: **Oracle Linux 7.9 (64-bit)** (minimal install); one template **9200** →
-  clones **9201–9212** (built `9201–9209`). Built VM: 2 vCPU / **2 GB** / 30 GB, virtio, DHCP.
+  clones **9201–9212** (built `9201–9209`). Built VM: 2 vCPU / **6 GB** / 30 GB, virtio, DHCP.
 - Desktop: **Xfce** (from the archived EPEL 7 repo) with **lightdm autologin**
   (`student` user) — light enough for 2 GB.
 - Stack (free path): **Firefox ESR 52.9.0esr x86_64** + **java-1.8.0-openjdk
@@ -163,14 +180,45 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped
   Auto-updates disabled.
 - **Fallback:** 32-bit Oracle JRE 8 + 32-bit Firefox if IcedTea-Web can't launch
   the applet (Oracle JRE is the only source of `libnpjp2.so`).
+- **Dev/DB tools (in template as of 2026-10-11; all free & native):** **SQL
+  Developer** (with Temurin **JDK 17**), **SQLcl**, Oracle **Instant Client**
+  (`sqlplus`), **DBeaver CE** (TOAD alt), **FileZilla** (WinSCP alt), **PuTTY**,
+  **Geany** (Notepad++ alt; also the default handler for `.txt`/`.log`/`.sql`).
+  Installed under **`/opt/ebs-tools/`**, with desktop launchers in
+  `/home/student/Desktop/` + the app menu, `PATH`/`JAVA_HOME`/`TNS_ADMIN` via
+  `/etc/profile.d/ebs-tools.sh`, and `tnsnames.ora` aliases `EBSDB_CLASS` +
+  `EBSDB_STU01..09`. **Rebuild:** `scripts/client/build-client-template.sh`.
+  (Forms/Reports Builder, BI Publisher Desktop, Workflow Builder are
+  Windows-only — deferred / Wine later.)
+- **Direct VNC (2026-10-12):** **`x11vnc`** shares the console display `:0` on
+  **port 5900** — students connect with any VNC viewer to `<client-ip>:5900`.
+  Default PIN **`29999`** (baked into the template; students change it via the
+  desktop **"Change VNC password"** launcher). Live addresses:
+  `scripts/client/vnc-credentials.sh`. **LAN-only** (VNC is unencrypted) — tunnel
+  over SSH if ever exposed beyond the LAN.
+- **QEMU guest agent (2026-10-12):** **`qemu-guest-agent` installed + `agent: 1`**
+  set, so the **Proxmox UI shows each VM's IP + guest metrics**. The client
+  template and the golden both carry it; apply it to running VMs with
+  `scripts/install-ebs-guest-agent.sh` (golden: `scripts/fix-golden-agent.sh`).
+  Note: the OL6 appliance's yum repos are dead, so the EL6 agent RPM is fetched on
+  the host and pushed in. Desktop launchers now have proper **icons**.
+- **Per-trainee access sheet (2026-10-12):** each client desktop has
+  **`~/Desktop/your_access.txt`** listing every connection credential (VNC + PIN,
+  Proxmox login, class EBS login `STUNN`/`SYSADMIN`, sandbox web/SSH/DB incl.
+  `apps`/`system`/`sys`/`APPLSYSPUB`, tool recipes). Written by
+  **`scripts/client/write-access-file.sh`** (reads `.env` + `inventory.conf` — holds
+  no secrets; re-runnable to refresh), which also sets the guest hostname to
+  `client-stuNN`. Invoked by `build-client-template.sh` / `add-students.sh` /
+  `reset-student.sh --client`.
 - Access: **noVNC in-browser** (default; needs a Proxmox user with `VM.Console`),
   **SPICE** optional (`vga: qxl` + `virt-viewer`). RDP rejected on OL7.
 - **Student accounts (2026-10-07):** Proxmox users `stu01–stu09@pve` (password =
   lab password) with role **`PVEVMUser`** on `/vms/920N` (client) + `/vms/910N`
   (sandbox) — noVNC/power for their own two VMs only. Client VMs are
   **manual-start** (no `onboot`).
-- **Budget watch:** linked clones save disk, not RAM — 12 client VMs + 12 EBS
-  sandboxes + class can approach ~188 GiB. Cap concurrent sandboxes/CPU.
+- **Budget watch:** linked clones save disk, not RAM — **6 GB per client** now, so
+  9 clients ≈ 54 GB. With the class + 9 sandboxes that's ~182 GB of 188; a
+  12-student lab at 6 GB clients needs ~256 GB. Cap concurrent sandboxes.
 
 ## Key IDs / names used by convention
 - Staging VM (`ebs-staging`): **900** — **retired 2026-10-03** (media kept at `/srv/ebs-media`)
@@ -231,6 +279,11 @@ relevant; do not imply the setup is legally "licensed for training."
   its contents into tracked docs. The Oracle account credentials and the
   edelivery `wget` token must never touch the repo.
 - Keep everything reproducible: commands belong in `README.md`.
+- **Canonical credentials:** EBS student logins are **`STU01..STUNN` / `@codeline@`**
+  (from `.env`). This is **enforced**: `create-class-users.sh` always (re)sets each
+  password, `reset-student.sh` resets that student's login, and `restore-ebs-lab.sh`
+  runs `create-class-users.sh` at the end. If a login ever fails with
+  `FND_APPL_LOGIN_FAILED`, run `scripts/reset-ebs-password.sh --students`.
 - "Verify" markers: exact ports, passwords, env-script names, and media file
   names vary by appliance — confirm on the actual VM before hard-coding.
 - Do not boot the golden template for class; always clone.
@@ -246,7 +299,10 @@ relevant; do not imply the setup is legally "licensed for training."
 - **Key fixes:** EBS VMs need **`--cpu Westmere`** (host panics the OL6 UEK
   kernel); SSH to the appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**; the FND
   `.dbc` must be **generated by AutoConfig** (`adautocfg.sh appspass=apps`), not
-  left as the shipped `template.dbc`.
+  left as the shipped `template.dbc`. Also: **`timeout` cannot wrap the shell
+  function `ssh_ebs`** (timeout execs a binary) — use the bounded
+  **`ssh_ebs_t <secs> …`** helper in `lib.sh`; the old `timeout … ssh_ebs` in
+  `lab-stop.sh` silently skipped the EBS shutdown (VMs never rebooted).
 - **Stage 5 blocker RESOLVED (2026-10-03):** the HTTP 500 was caused by the FND
   `.dbc` still being the shipped `template.dbc` (`DB_HOST=host_name`,
   `DB_PORT=port_number`, `TWO_TASK=database`) while the context XML was already

@@ -48,7 +48,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 | Host staging LV | `/dev/pve/ebs-staging` = 300 GiB thin, mounted at `/srv/ebs-media` — now holds only the pristine `disk1.vmdk` + `.ovf` (NFS removed 2026-10-03) |
 | Staging VM | VMID **900** `ebs-staging` — **retired/deleted 2026-10-03** (media kept on `/srv/ebs-media`) |
 | Secrets | repo **`.env`** (mode 600, **git-ignored**) — the original `~/.ebs-lab.env` lived on the now-retired staging VM |
-| Existing VM (do not touch) | VMID **100** `ubuntu-server-vm` (running) |
+| Former VM (removed) | VMID **100** `ubuntu-server-vm` — **destroyed 2026-10-12** (freed 30 GB) |
 | Appliance access | **SSH works**, but OL6 only offers legacy `ssh-rsa` → from the Proxmox host use `ssh -oHostKeyAlgorithms=+ssh-rsa root@192.168.100.223` |
 
 Reserved VMIDs: staging **900**, golden **9000**, class **9010**, EBS clones
@@ -435,7 +435,6 @@ qm listsnapshot 9000
 | 9109 | ebs1213-stu09 | per-student Apps DBA | `.244` (static) | running, EBS `302` |
 | 9200 | client-template | Forms desktop base | — | **template**, stopped |
 | 9201–9209 | client-stu01..09 | Forms desktops | DHCP (dynamic) | running |
-| 100 | ubuntu-server-vm | unrelated | `192.168.100.240` | running (do not touch) |
 
 - **Addressing caveat (2026-10-06):** the new sandboxes went on `.241–.243` because
   the intended `.236` was **already answered by another LAN device** (arp-scan showed
@@ -685,3 +684,110 @@ there is no `golden-clean` snapshot to roll back.
   creates the user if missing) plus an `acl_ensure` call at the end of
   `reset-student.sh`. Healed live; verified `stu01` sees `9101` + `9201` again via
   the API. Wired as `run.sh sync-acls` / `make sync-acls`.
+- **2026-10-11** — **DR to USB + single-script restore.** Attached a 2 TB USB HDD
+  (`/dev/sdc1`, exFAT, mounted `/mnt/ebs-usb`). Added `scripts/backup-to-usb.sh`
+  (dumps golden `9000` + client `9200`, the repo incl. `.env`, a host-config
+  snapshot, and ships a self-contained `restore-ebs-lab.sh`), plus
+  `scripts/lab-rebuild.sh` / `scripts/create-class.sh` for the clean-rebuild path
+  and `scripts/restore-ebs-lab.sh` (run on a fresh Proxmox host). Wired
+  `run.sh backup|rebuild` and `make backup|rebuild`. See `README.md` §14.
+  **First full backup written** to `/mnt/ebs-usb/ebs-lab-backup-20261011-2003`
+  (**96 GB**: `9000` 47 GB, `9010` 47 GB, `9200` 1.6 GB, + repo incl. `.env`,
+  host config, `restore-ebs-lab.sh`, `sha256sums.txt`). `vzdump` of a template and
+  a `qmrestore` round-trip were both verified; `.vma.zst` compressed ~5:1.
+- **2026-10-11 (cont.)** — **Defined the "base + media" backup shape** (the operator
+  only wants the base to spin up + add students, plus the pristine media for an
+  offline golden rebuild). Made `--with-media` copy the **whole `/srv/ebs-media`
+  tree** (incl. `client/` — the 32-bit Firefox fallback) instead of just top-level
+  VMDK/OVF; `restore-ebs-lab.sh` now prints the offline rebuild hint
+  (`MEDIA_DIR=<backup>/media scripts/build-golden.sh --yes`). Added
+  `run.sh base-backup` / `make base-backup`. `README.md` §14 now documents the
+  three shapes: **base** / **base+media** / **full-state**; the class + sandboxes
+  are intentionally excluded (recreated by `lab-rebuild.sh`).
+  **Ran it:** `/mnt/ebs-usb/ebs-lab-backup-20261011-2058` = **103 GB** (golden
+  `9000` 47 GB, client `9200` 1.6 GB, pristine media 54 GB, + repo/host-config/
+  restore script). Full `sha256sum -c` **OK** (incl. the 47 GB golden dump and the
+  54 GB VMDK). The earlier 96 GB `--with-class` backup was deleted — the USB now
+  holds only this base+media backup.
+- **2026-10-11 (cont.)** — **Housekeeping + client dev-tools template.**
+  Stopped VM 100 (onboot 0; RAM freed); removed the unused tracked
+  `ebs_setup_opencode_session.json` (+git-ignored); `.env` students → STU01–09.
+  Added `scripts/client/{build-client-template.sh,install-tools.sh}` and baked the
+  **free native tool set** into client template `9200` — **SQL Developer** (+Temurin
+  **JDK 17**), **SQLcl**, Oracle **Instant Client** (`sqlplus`), **DBeaver CE**,
+  **FileZilla**, **PuTTY** — under `/opt/ebs-tools/` with desktop launchers +
+  `tnsnames.ora` (`EBSDB_CLASS`, `EBSDB_STU01..09`). Bumped clients to **6 GB**,
+  destroyed + recreated `client-stu01..09`, re-ran `sync-acls.sh` (the `--purge`
+  again dropped the client ACLs). Build bugs fixed: template base LVs are
+  read-only → `lvchange -prw` before booting; and `timeout` can't wrap a shell
+  function. Windows-only builders (Forms/Reports/BIP/Workflow) deferred to a
+  later Wine phase. VM100/LAB note: host is now 188 GiB with no unrelated VM.
+- **2026-10-12** — **Fix: `stu01` couldn't log in to EBS** ("connection not
+  secure" was a red herring — the HTTP page just warns; the real symptom was the
+  login page reloading). Diagnosed from the class Apache `access_log`:
+  `OACORE` returned **`FND_APPL_LOGIN_FAILED`** for STU01. `FND_USER_PKG.VALIDATELOGIN`
+  confirmed **STU01/STU02 had a different password** (STU03–09 were fine — the
+  password was likely changed at first login on Oct 5). Fixed with
+  `FND_USER_PKG.UPDATEUSER` (admin reset). Added **`scripts/reset-ebs-password.sh`**
+  (+ `guest/set-ebs-password.sh`) and reset all 9 `STU*` to `@codeline@`
+  (all now `VALID`). Wired into the AGENTS action map + README §14.
+- **2026-10-12 (cont.)** — **Enforced the student-password invariant.** Made
+  `guest/create-ebs-user.sh` **always (re)set** each `STU*` password to `@codeline@`
+  via `FND_USER_PKG.UPDATEUSER` (plus `password_date=SYSDATE`), so
+  `create-class-users.sh` is now corrective, not just create-only. `reset-student.sh`
+  also resets that student's class EBS login; `restore-ebs-lab.sh` now always runs
+  `create-class-users.sh` (even when a class was restored from backup). Verified by
+  deliberately drifting `STU01` and re-running `create-class-users.sh` → healed.
+  Login failures now surface as `FND_APPL_LOGIN_FAILED`; the documented canonical
+  student login is `STUxx` / `@codeline@`.
+- **2026-10-12 (cont.)** — **Direct VNC access for students.** Baked **`x11vnc`**
+  (shares console `:0`) into the client template: **port 5900**, default PIN
+  **`29999`**, `x11vnc.service` at boot, a desktop **"Change VNC password"**
+  launcher (zenity + NOPASSWD helper), and firewall opened. Added
+  `scripts/client/vnc-credentials.sh` (IP + PIN access sheet). Clients re-cloned
+  from the updated template. Internal/LAN-only (VNC is unencrypted).
+- **2026-10-12 (cont.)** — **QEMU guest agent + launcher icons.** Added
+  `qemu-guest-agent` + `agent: 1` — baked into the **client template** (clients
+  re-cloned) and the **golden** (`scripts/fix-golden-agent.sh`; the OL6 appliance's
+  yum repos are dead so the EL6 RPM is fetched on the host and pushed in), plus
+  `scripts/install-ebs-guest-agent.sh` for the running class/sandboxes. Proxmox now
+  shows each VM's **IP + guest metrics** — **verified on all 19 VMs** (10 EBS:
+  `.223`/`.231–.235`/`.241–.244`; 9 clients: their DHCP IPs), with all EBS still
+  `302`. Also gave every desktop launcher a real **icon** (Firefox `mozicon128.png`,
+  DBeaver `icon.xpm`, SQL Developer `icon.png`, FileZilla `hicolor/48x48`, PuTTY,
+  themed terminal/network for SQLcl/SSH/ChangeVNC).
+  **Also fixed a latent NIC-MAC collision:** the class (`9010`) had reused the
+  golden's MAC (originally to avoid a guest NIC rename), so booting the golden
+  while the class ran made MAC-based host lookups resolve to the wrong VM (an
+  install briefly hit the class). The **golden now has a unique MAC**
+  (`BC:24:11:A0:00:01`); clones get their own. Note: OL6's agent init script is
+  **`qemu-ga`**, not `qemu-guest-agent`. Also fixed a latent bug: `lab-stop.sh`
+  wrapped the **shell function** `ssh_ebs` in `timeout`, which `timeout` cannot
+  exec — so the clean EBS shutdown was silently skipped and the EBS VMs never
+  rebooted. Added a bounded helper **`ssh_ebs_t <secs> …`** to `lib.sh` and used
+  it in `lab-stop.sh`.
+- **2026-10-12 (cont.)** — **Per-trainee access sheet (`your_access.txt`).** Added
+  **`scripts/client/write-access-file.sh`**: writes a per-student credential
+  cheat-sheet onto every client desktop (VNC address + PIN, Proxmox login, the shared
+  class EBS login `STUNN`/`SYSADMIN`, the student's own sandbox web/SSH/DB creds incl.
+  `apps`/`system`/`sys`/`APPLSYSPUB`, SQLcl/SQL Developer/DBeaver/FileZilla/PuTTY
+  recipes, and sandbox paths/start-stop) and sets the guest hostname to `client-stuNN`
+  (previously all clones were `client-template`). It reads `.env` + `inventory.conf`,
+  so the script itself holds **no secrets** and can be re-run any time to refresh;
+  invoked automatically by `build-client-template.sh`, `add-students.sh` and
+  `reset-student.sh --client`. Written to all 9 clients (2026-10-12).
+- **2026-10-12 (cont.)** — **Geany added to the clients.** Baked the native
+  **Geany** editor into the client template (`install-tools.sh`; EPEL-7 archive) as
+  the free stand-in for **Notepad++**, and made it the **default handler** for
+  `.txt`/`.log`/`.sql`/`.conf` (+ scripts/HTML) via `/etc/xdg/mimeapps.list` +
+  `~/.config/mimeapps.list`, with a desktop launcher. Client template rebuilt →
+  all 9 clients re-cloned. (No Wine; native repo package only.)
+- **2026-10-12 (cont.)** — **Fresh DR backup to the USB.** Ran
+  `scripts/backup-to-usb.sh /mnt/ebs-usb --with-media` →
+  **`/mnt/ebs-usb/ebs-lab-backup-20261012-2008`** (106 GB: golden `9000` vzdump 47 GB,
+  client template `9200` 3.6 GB, pristine media 55 GB, repo tarball incl. `.env`, host
+  config, restore script + manifest). Every file (25) **sha256-verified OK**. The prior
+  `ebs-lab-backup-20261011-2058` was **removed** (superseded).
+- **2026-10-12** — **Destroyed VM 100** (`qm destroy 100 --purge`) to free its
+  ~30 GB thin volume; removed the now-dead VM-100 step from `scripts/lab-stop.sh`
+  and the doc references. The host now runs only lab VMs.

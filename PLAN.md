@@ -184,14 +184,13 @@ client (licensed). The free **OpenJDK 8 + IcedTea-Web** route was **chosen 2026-
 | EBS appliance (golden) | 4 | 12 GB | **300 GiB thin** (VMDK virtual size) | `qm template` (no snapshot) |
 | Shared class instance | 4 | 12 GB | clone | `--full 1` |
 | 12 × student EBS clones | 4 each | 12 GB each | linked deltas | `--full 0` (5 built) |
-| Client template | 2 | 2 GB | 30 GB | OL7.9 + FF ESR52 + OpenJDK8/IcedTea-Web |
-| 12 × client clones | 2 each | 2 GB each | linked deltas | `--full 0` (5 built) |
+| Client template | 2 | 6 GB | 30 GB | OL7.9 + FF ESR52 + OpenJDK8/IcedTea-Web + dev/DB tools |
+| 12 × client clones | 2 each | 6 GB each | linked deltas | `--full 0` (9 built) |
 
-RAM check: 12×12 (EBS) + 12 (class) + 12×2 (clients) ≈ **180 GB of ~188 GiB**
-(~8 GB host headroom). **Very tight:** running all 12 EBS sandboxes + 12 clients +
-class at once fills RAM — cap concurrent sandboxes (e.g. ~5–8) or accept swap
-risk. Clients at 4 GB each would not fit; keep them at **2 GB**. (As built
-2026-10-07: 10 EBS instances + 9 clients run in ~45 GiB.)
+RAM check: 12×12 (EBS) + 12 (class) + 12×6 (clients) ≈ **228 GB > 188 GiB** — a
+full 12-student lab at **6 GB clients** does **not** fit. It fits ~**9 students**
+(class + 9×18 = 174 GB). For 12 students either cap concurrent sandboxes (start
+on demand) or add RAM (~**256 GB**). Keep clients at **6 GB** (dev tools).
 Storage check: the golden disk is 300 GiB *virtual* and actually maps **~243 GiB**
 (Vision DB filesystem). A full clone (class) duplicates that ~243 GiB; linked
 clones share it and store only deltas. So base + class ≈ **~0.5 TiB**, leaving

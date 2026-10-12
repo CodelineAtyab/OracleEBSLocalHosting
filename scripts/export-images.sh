@@ -27,8 +27,7 @@ for id in 9000 9200; do
     vzdump "$id" --mode stop --compress zstd --storage "$STORAGE" \
       --notes-template "$name exported $STAMP"
   else
-    vzdump "$id" --mode stop --compress zstd --dumpdir "$OUT" \
-      --notes-template "$name exported $STAMP"
+    vzdump "$id" --mode stop --compress zstd --dumpdir "$OUT"
   fi
 done
 echo "Done. Restore with:  qmrestore <file.vma.zst> <vmid>"

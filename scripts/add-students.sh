@@ -46,7 +46,7 @@ for k in $(seq 1 "$N"); do
   qm clone "$GOLDEN" "$ebs" --name "$ename" --full 0 >/dev/null || { echo "clone $ebs failed"; exit 1; }
   qm set "$ebs" --memory 12288 --cores 4 --onboot 0 >/dev/null
   qm clone "$CLIENT_TEMPLATE" "$cli" --name "$cname" --full 0 >/dev/null || { echo "clone $cli failed"; exit 1; }
-  qm set "$cli" --memory 2048 --cores 2 --onboot 0 >/dev/null
+  qm set "$cli" --memory 6144 --cores 2 --onboot 0 >/dev/null
   printf "%-5s %-17s %-8s %s\n" "$ebs" "$ename" "ebs"    "$ip" >> "$INVENTORY"
   printf "%-5s %-17s %-8s %s\n" "$cli" "$cname" "client" "-"   >> "$INVENTORY"
 done
@@ -60,6 +60,10 @@ for k in $(seq 1 "$N"); do "$HERE/provision-sandbox.sh" $((9100+max+k)) || echo 
 
 # --- boot all client VMs ----------------------------------------------------
 for row in $(client_rows | awk '{print $1}'); do qm start "$row" >/dev/null 2>&1 || true; done
+
+# --- per-trainee access sheets on the NEW clients ---------------------------
+newids=""; for k in $(seq 1 "$N"); do newids="$newids $((9200+max+k))"; done
+"$HERE/client/write-access-file.sh" $newids || echo "WARN: access-sheet generation had errors"
 
 # --- Proxmox users + ACLs ---------------------------------------------------
 for k in $(seq 1 "$N"); do

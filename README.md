@@ -192,11 +192,12 @@ Proxmox VE 9.2.20 host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 | EBS appliance (golden) | 4 | 12 GB | **300 GiB thin** (VMDK virtual size) |
 | Shared class instance | 4 | 12 GB | clone |
 | 12 × student EBS clones | 4 each | 12 GB each | linked deltas |
-| Client template | 2 | 2 GB | 30 GB |
-| 12 × client clones | 2 each | 2 GB each | linked deltas |
+| Client template | 2 | 6 GB | 30 GB |
+| 12 × client clones | 2 each | 6 GB each | linked deltas |
 
-RAM: 12×12 + 12 + 12×2 = **~180 GB of ~188 GiB** — very tight; **cap how many EBS
-sandboxes run at once** (10 EBS instances + 9 clients currently use ~45 GiB).
+RAM: 12×12 + 12 + 12×6 = **~228 GB > 188 GiB** — a full 12-student lab at **6 GB
+clients** does **not** fit; ~**9 students** fit (class + 9×(12+6) = 174 GB). Cap
+concurrent EBS sandboxes, or add RAM (≈**256 GB** for 12 students).
 Storage: golden ~300 GiB + class full clone + deltas ≈ **800–900 GiB of 1.67 TiB**,
 and only fits because clones are linked. Full detail: `PLAN.md` §2.1.
 
@@ -492,8 +493,9 @@ student their own **Apps DBA sandbox** clone for destructive admin practice, and
 their own **client VM** for Forms. HTML pages work in any browser; Forms needs
 the Firefox ESR52 + Java (IcedTea-Web) client (§10).
 
-> **RAM budget:** 12×EBS (12 GB) + class (12 GB) + 12×client (2 GB) ≈ **180 GB of
-> ~188 GiB**. Cap how many EBS sandboxes run simultaneously.
+> **RAM budget:** 12×EBS (12 GB) + class (12 GB) + 12×client (**6 GB**) ≈ **228 GB**
+> — over 188 GiB. At 6 GB clients the host fits ~**9 students**; for 12, cap
+> concurrent sandboxes or upgrade to ~256 GB.
 
 ---
 
@@ -512,14 +514,71 @@ so the **stock 12.1.3 appliance needs no server patching**. Template `9200` is
 - Wiring: symlink the plugin into `/usr/lib64/mozilla/plugins`, `/opt/firefox/plugins`
   and `~/.mozilla/plugins`; set `plugin.load_flash_only=false`; verify in
   `about:plugins`. Add the EBS URL to the IcedTea-Web exception site.
-- Desktop: **Xfce** (archived EPEL 7) + lightdm autologin — light for 2 GB.
+- Desktop: **Xfce** (archived EPEL 7) + lightdm autologin.
 - Access: **noVNC in-browser** (default; Proxmox user with `VM.Console`),
   **SPICE** optional (`vga: qxl` + `virt-viewer`). RDP rejected (xrdp unavailable
   on Oracle Linux 7).
 - Disable auto-updates; allow legacy/SHA-1 JARs.
+- **RAM: 6 GB per client** (was 2 GB) — required for the dev/DB tools.
 
-**Build the client template once**, confirm a Forms screen opens, then snapshot and
-linked-clone it to `9201–9212`. See `PLAN.md` §1.4 and `RESEARCH.md` §7.
+### Dev/DB tools (baked into template `9200` as of 2026-10-11)
+Free, native equivalents of the Windows toolchain, installed so **every client clone
+has them** — launchers on the desktop + app menu, all under `/opt/ebs-tools/`:
+
+| Windows tool | Linux replacement |
+|---|---|
+| SQL Developer | **Oracle SQL Developer** (with Temurin **JDK 17**) |
+| SQL\*Plus | Oracle **Instant Client** (`sqlplus`) + **SQLcl** |
+| TOAD | **DBeaver CE** |
+| WinSCP | **FileZilla** |
+| PuTTY | **PuTTY** (GUI) + Xfce Terminal + `ssh` |
+| Notepad++ | **Geany** (native text editor) — also the **default handler** for `.txt`/`.log`/`.sql`/`.conf` (double-click opens it) |
+| JDeveloper | *deferred (old-JDK caveat)* |
+| Forms/Reports Builder, BI Publisher Desktop, Workflow Builder | *Windows-only — deferred / Wine later* |
+
+`tnsnames.ora` provides `EBSDB_CLASS` and `EBSDB_STU01..09`; `/etc/profile.d/ebs-tools.sh`
+sets `PATH`/`JAVA_HOME`/`TNS_ADMIN`. **Rebuild** the template (destroy + re-provision
+the client VMs) with **`scripts/client/build-client-template.sh`** (see §14).
+See `PLAN.md` §1.4 and `RESEARCH.md` §7.
+
+### Proxmox guest agent (IP + metrics in the GUI)
+Every client **and every EBS VM** ships **`qemu-guest-agent`** with **`agent: 1`**, so
+the Proxmox VM summary shows the guest's **IP address** plus guest metrics
+(verified 2026-10-12: `qm guest cmd 9201 network-get-interfaces`). Desktop launchers
+use real **icons** — each app's bundled icon where one exists, otherwise a relevant
+themed icon. The client template installs the agent natively (via `install-tools.sh`);
+the OL6 appliance's yum repos are dead, so the **EL6 agent RPM is fetched on the host
+and pushed in** — `scripts/fix-golden-agent.sh` (golden) and
+`scripts/install-ebs-guest-agent.sh` (running class/sandboxes).
+
+### Per-trainee access sheet (`your_access.txt`)
+Each client VM's desktop carries **`~/Desktop/your_access.txt`** — a per-student
+cheat-sheet listing every credential they need: VNC address + PIN, Proxmox login,
+the shared class EBS login (`STUNN` / `SYSADMIN`), the student's own sandbox (web URL;
+SSH `root`/`oracle`/`applmgr`; DB `apps`/`system`/`sys` as SYSDBA/`APPLSYSPUB`), the
+tool-by-tool connection recipes (SQLcl/Plus, SQL Developer, DBeaver, FileZilla, PuTTY, Geany)
+and the sandbox paths/start-stop commands. It is written — and the guest hostname set
+to `client-stuNN` — by **`scripts/client/write-access-file.sh`**, which reads `.env` +
+`inventory.conf` and therefore holds **no secrets itself**; re-run it any time to
+refresh the sheet (e.g. after a client's DHCP address changes). It is invoked
+automatically by `build-client-template.sh`, `add-students.sh` and
+`reset-student.sh --client`.
+
+### Direct VNC access (connect without the Proxmox UI)
+`x11vnc` runs **inside each client VM**, sharing the console display (`:0`) on
+**port 5900** — the student sees the *same desktop* the Proxmox console shows.
+Connect with any VNC viewer to **`<client-ip>:5900`**.
+
+- **Default VNC PIN: `29999`** — students change it via the desktop **"Change VNC
+  password"** launcher (a `zenity` prompt; writes `/etc/x11vnc.pass` + restarts
+  `x11vnc.service`).
+- The server is **baked into the template**, so every clone has it and it starts
+  at boot (`x11vnc.service`, `-loop -shared`).
+- **Addresses:** clients are DHCP (stable while the node stays up). Print the live
+  list with `scripts/client/vnc-credentials.sh`.
+- **Security:** VNC is unencrypted — **LAN-only**; tunnel over SSH (or front with a
+  gateway) if you ever expose it beyond the LAN.
+- Resetting a client (`reset-student.sh N --client`) restores the default PIN.
 
 **Community/uncertified config:** Oracle certifies the FF-ESR52 + Oracle JRE plugin
 path on **Windows only**. Both the Oracle `libnpjp2.so` route and the
@@ -619,7 +678,7 @@ make up | down | status | init N=8 | provision VM=9101 | class-users | export
 | Script | What it does |
 |--------|--------------|
 | `scripts/lab-start.sh` | Boot every EBS VM, start the Oracle DB + app tier, wait for `AppsLogin`=302, then boot the client VMs. `lab-start.sh ebs` / `clients` does one half. Honours `CONCURRENCY` (default 4). |
-| `scripts/lab-stop.sh` | Cleanly stop the lab (EBS: `stopapps`→`stopvisiondb`→`shutdown`; clients: `qm stop`; unrelated VM 100 graceful). `--poweroff` also powers off the host. |
+| `scripts/lab-stop.sh` | Cleanly stop the lab (EBS: `stopapps`→`stopvisiondb`→`shutdown`; clients: `qm stop`). `--poweroff` also powers off the host. |
 | `scripts/lab-status.sh` | Table of each VM's state plus the `AppsLogin` code for running EBS guests. |
 
 ### Lifecycle / maintenance
@@ -629,8 +688,19 @@ make up | down | status | init N=8 | provision VM=9101 | class-users | export
 | `scripts/provision-sandbox.sh <vmid>` | (Re)configure/repair one EBS sandbox: IP + `/etc/hosts` (+`ARPCHECK=no`), javacache, `FND_NODES.SERVER_ADDRESS`, start EBS, verify 302. Handles the fresh-clone `.230` placeholder. **MAC-verified** — refuses to touch an address owned by another NIC. |
 | `scripts/reset-student.sh <student> [--client]` | Wipe a student's environment back to the pristine templates: destroy + re-clone the sandbox (`9000`) and, with `--client`, the client (`9200`), then re-provision. Keeps VMIDs + Proxmox users. **Destructive.** Re-asserts the ACL (see gotcha below). |
 | `scripts/sync-acls.sh` | Ensure every student's `stuNN@pve` exists and holds `PVEVMUser` on their two VMs. Run after a raw `qm destroy --purge`, or when a student "can't see their VM". |
-| `scripts/create-class-users.sh` | Ensure one EBS login per student (`STU01..`) on the shared class instance. |
-| `scripts/export-images.sh [--storage S]` | DR: `vzdump` the golden + client template. |
+| `scripts/create-class-users.sh` | Ensure one EBS login per student (`STU01..`) on the shared class instance, **and (re)set each password to `@codeline@`** (idempotent + corrective) with a `VALIDATELOGIN` check. |
+| `scripts/reset-ebs-password.sh <user> <password>` | Admin-reset an EBS application password on the class (no old password needed), verifying with `FND_USER_PKG.VALIDATELOGIN`. `--students` resets all `STU*` to the `.env` value. |
+| `scripts/create-class.sh` | (Re)create the shared class instance (`9010`) from the golden (full clone) + provision. |
+| `scripts/lab-rebuild.sh [N]` | Clean build from the templates: class + N sandboxes + N clients + Proxmox users + class logins. Regenerates `inventory.conf`. |
+| `scripts/client/build-client-template.sh` | Rebuild the **client template** with the free dev/DB tools (SQL Developer+JDK17, SQLcl, Instant Client, DBeaver, FileZilla, PuTTY) and **re-provision all client VMs** at 6 GB (+ guest agent, `your_access.txt`, hostname). Destroys the client clones first (they share the template base). |
+| `scripts/client/install-tools.sh` | Guest-side installer invoked by the above (installs into `/opt/ebs-tools/`, launchers, `tnsnames.ora`, and **x11vnc** with the default VNC PIN `29999`). |
+| `scripts/client/vnc-credentials.sh` | Print each client VM's live IP + VNC address (`:5900`) and the default PIN — the student access sheet. |
+| `scripts/client/write-access-file.sh [vmid\|index…]` | Write/refresh the per-trainee `~/Desktop/your_access.txt` cheat-sheet (all connection creds) on each client VM and set its hostname to `client-stuNN`. Reads `.env` — no secrets in the script; safe to re-run. |
+| `scripts/fix-golden-agent.sh` | Install `qemu-guest-agent` into the **golden template** (OL6; RPM fetched on the host) + `agent: 1`, so future EBS clones show their IP in Proxmox. |
+| `scripts/install-ebs-guest-agent.sh [vmid…]` | Install/enable the guest agent on the **running** class + sandboxes (IP + metrics in the Proxmox UI). |
+| `scripts/backup-to-usb.sh <mount> [--with-class\|--with-sandboxes\|--with-media]` | **DR:** dump golden + client templates (and optionally class/sandboxes/media) + the repo (incl. `.env`) + host config to a disk; ships `restore-ebs-lab.sh`. |
+| `scripts/restore-ebs-lab.sh` | **Run on a fresh Proxmox host** from a backup dir: restores templates + repo, rebuilds the fleet, starts the lab. |
+| `scripts/export-images.sh [--storage S]` | DR: `vzdump` the golden + client template (in place). |
 | `scripts/build-golden.sh --yes` | Rare DR: rebuild the golden `9000` from pristine media (see §6–§8). |
 
 ### Support files
@@ -655,6 +725,44 @@ range, so an IP may already be in use — `add-students.sh` ARP-scans for free
 addresses and `provision-sandbox.sh` refuses an address owned by a different MAC.
 The robust fix remains an isolated `vmbr1` VLAN or DHCP reservations (see §9).
 
+### Disaster recovery (the "single script" restore)
+
+Pick a backup "shape" by what you want to be able to recover:
+
+| Shape | Command | Contents | Use |
+|-------|---------|----------|-----|
+| **base** (default) | `scripts/backup-to-usb.sh /mnt/ebs-usb` | golden `9000` + client `9200` + repo (incl. `.env`) + host config | spin the whole lab up from templates |
+| **base + media** ⭐ | `scripts/backup-to-usb.sh /mnt/ebs-usb --with-media` | base **+** the pristine appliance VMDK | also rebuild the golden **offline** |
+| **full state** | `… --with-class --with-sandboxes` | base **+** the class and every sandbox/client | exact-copy DR (keeps student data) |
+
+```bash
+# 1) on the LAB host — write the backup to the mounted USB disk:
+scripts/backup-to-usb.sh /mnt/ebs-usb --with-media     # base + pristine media
+#    (equivalently: ./run.sh base-backup /mnt/ebs-usb  |  make base-backup M=/mnt/ebs-usb)
+
+# 2) on a FRESH Proxmox host — mount the disk and run the ONE restore script:
+mount /dev/sdX1 /mnt/usb
+bash /mnt/usb/ebs-lab-backup-*/restore-ebs-lab.sh        # class + 9 students
+bash /mnt/usb/ebs-lab-backup-*/restore-ebs-lab.sh 12     # ...or 12 students
+```
+
+**What a *base* backup contains:** golden `9000` + client `9200` (the irreplaceable
+images), the repo (scripts + docs + the git-ignored `.env`), a host-config
+snapshot (`/etc/pve`, interfaces, `host-state.txt`), and the self-contained
+`restore-ebs-lab.sh`. The class and sandboxes are **not** stored — they are cheap
+to recreate. The restore script restores the templates + repo, then
+(`lab-rebuild.sh`) recreates the class + N sandboxes + N clients, the Proxmox
+users and the class logins, and starts the lab. Host networking and the Proxmox
+user DB are **not** overwritten — reference copies only.
+
+**Add students later:** `scripts/add-students.sh N` (then
+`scripts/create-class-users.sh`) — no rebuild needed, any number (bounded by host
+RAM and free IPs; see the addressing caveat above).
+
+**Offline golden rebuild** (base + media only): the pristine VMDK lets you
+reconstruct `9000` without internet —
+`MEDIA_DIR=/mnt/usb/ebs-lab-backup-*/media scripts/build-golden.sh --yes`.
+
 ---
 
 ## 15. Repository files
@@ -668,7 +776,7 @@ The robust fix remains an isolated `vmbr1` VLAN or DHCP reservations (see §9).
 | `RESEARCH.md` | Platform research + decision record (12.1.3 vs 12.2.12, sources) |
 | `MVP-RUNBOOK.md` | Literal step-by-step for the first working instance (MVP-A/B) |
 | `PHASE1-CHECKLIST.md` | Tickable Phase 1 execution checklist (host verify + appliance download) |
-| `scripts/` | Operate + rebuild the lab: `lab-start/stop/status.sh`, `add-students.sh`, `provision-sandbox.sh`, `reset-student.sh`, `create-class-users.sh`, `export-images.sh`, `build-golden.sh`, `inventory.conf`, `lib.sh`, `guest/` (see §14) |
+| `scripts/` | Operate + rebuild + back up the lab: `lab-start/stop/status.sh`, `add-students.sh`, `lab-rebuild.sh`, `create-class.sh`, `provision-sandbox.sh`, `reset-student.sh`, `sync-acls.sh`, `create-class-users.sh`, `backup-to-usb.sh`, `restore-ebs-lab.sh`, `export-images.sh`, `build-golden.sh`, `inventory.conf`, `lib.sh`, `guest/`, `client/` (see §14) |
 | `run.sh` | Dependency-free entrypoint: `./run.sh up|down|status|init N|...` |
 | `Makefile` | Optional same commands for `make` users (`make up`, `make init N=3`) |
 

@@ -16,7 +16,7 @@ STOP_EBS() {
   local id="$1" name="$2" role="$3" ip="$4"
   if vm_running "$id"; then
     echo "  $name ($ip): stopapps -> stopvisiondb -> shutdown -h now"
-    timeout 220 ssh_ebs "$ip" '
+    ssh_ebs_t 600 "$ip" '
         su - oracle -c "/u01/install/APPS/scripts/stopapps.sh"       >/dev/null 2>&1
         su - oracle -c "/u01/install/VISION/scripts/stopvisiondb.sh" >/dev/null 2>&1
         sync; /sbin/shutdown -h now' >/dev/null 2>&1
@@ -35,14 +35,6 @@ ebs_rows > "$EBS_LIST"
 trap 'rm -f "$ASKPASS" "$EBS_LIST"' EXIT
 
 echo "== lab-stop =="
-echo "== 0) unrelated VM 100 (ubuntu-server-vm): graceful shutdown =="
-if vm_running 100; then
-  timeout 150 qm shutdown 100 --timeout 120 >/dev/null 2>&1 || qm stop 100 >/dev/null 2>&1
-  echo "  100 done"
-else
-  echo "  100 not running"
-fi
-
 echo "== 1) EBS guests: clean Oracle DB/app stop then OS shutdown =="
 xargs -P "$CONCURRENCY" -L1 "$HERE/lab-stop.sh" --stop-ebs < "$EBS_LIST"
 

@@ -35,9 +35,10 @@ cat > "$ASKPASS" <<'EOF'
 printf '%s\n' "$LAB_SSH_PW"
 EOF
 chmod 700 "$ASKPASS"
+export ASKPASS
 trap 'rm -f "$ASKPASS"' EXIT
 
-ssh_ebs() {            # ssh_ebs <ip> <remote-command...>   (stdin is inherited)
+_ssh_ebs() {           # _ssh_ebs <ip> <remote-command...>   (stdin is inherited)
   local ip="$1"; shift
   SSH_ASKPASS="$ASKPASS" SSH_ASKPASS_REQUIRE=force \
     setsid -w ssh \
@@ -45,6 +46,15 @@ ssh_ebs() {            # ssh_ebs <ip> <remote-command...>   (stdin is inherited)
       -oUserKnownHostsFile=/dev/null -oPubkeyAuthentication=no \
       -oPreferredAuthentications=password -oNumberOfPasswordPrompts=1 \
       -oConnectTimeout=15 root@"$ip" "$@"
+}
+ssh_ebs() { local ip="$1"; shift; _ssh_ebs "$ip" "$@"; }
+
+# Bounded variant: ssh_ebs_t <seconds> <ip> <remote-command...>
+# NOTE: you cannot do `timeout N ssh_ebs ...` — `timeout` execs a binary and
+# cannot call a shell function, so the command is silently skipped. Use this.
+ssh_ebs_t() {
+  local secs="$1" ip="$2"; shift 2
+  timeout "$secs" bash -c "$(declare -f _ssh_ebs)"'; _ssh_ebs "$@"' _ "$ip" "$@"
 }
 
 # --- inventory helpers ------------------------------------------------------

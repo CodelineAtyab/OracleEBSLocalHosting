@@ -46,7 +46,7 @@ if [ "$WITH_CLIENT" = 1 ]; then
   qm stop "$CLI" --skiplock 1 >/dev/null 2>&1 || true
   qm destroy "$CLI" --purge 1 >/dev/null 2>&1 || true
   qm clone 9200 "$CLI" --name "$cname" --full 0 >/dev/null || { echo "ERROR: clone $CLI failed"; exit 1; }
-  qm set "$CLI" --memory 2048 --cores 2 --onboot 0 >/dev/null
+  qm set "$CLI" --memory 6144 --cores 2 --onboot 0 >/dev/null
 fi
 
 echo "== provisioning the fresh sandbox =="
@@ -58,6 +58,19 @@ acl_ensure "$u" "$EBS"
 [ "$WITH_CLIENT" = 1 ] && acl_ensure "$u" "$CLI"
 echo "== re-applied ACL: $u on /vms/$EBS $([ "$WITH_CLIENT" = 1 ] && echo "+ /vms/$CLI") =="
 
+# Reset this student's EBS login password on the class to the documented default,
+# so "reset the VM" also restores the password (never drifts).
+if [ -n "$(ebs_rows | awk '$1==9010')" ] && [ -n "${EBS_STUDENT_PASSWORD:-}" ]; then
+  echo "== (re)asserting class EBS login STU$(printf %02d "$N") =="
+  "$HERE/reset-ebs-password.sh" "STU$(printf %02d "$N")" "$EBS_STUDENT_PASSWORD" \
+    || echo "WARN: class EBS login reset failed"
+fi
+
 echo "== starting client VMs =="
 for c in $(client_rows | awk '{print $1}'); do qm start "$c" >/dev/null 2>&1 || true; done
+
+if [ "$WITH_CLIENT" = 1 ]; then
+  echo "== (re)writing the access sheet on client $CLI =="
+  "$HERE/client/write-access-file.sh" "$CLI" || echo "WARN: access-sheet generation failed"
+fi
 echo "== reset complete: student $N sandbox $EBS restored and healthy =="

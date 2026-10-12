@@ -2,3 +2,6 @@
 .env
 *.env
 .env.*
+
+# OpenCode session export (large, unused)
+ebs_setup_opencode_session.json
