@@ -29,5 +29,6 @@ EOF
 
 "$HERE/create-class.sh" "$CLASS_IP"
 "$HERE/add-students.sh" "$N"
+"$HERE/sync-acls.sh"
 "$HERE/create-class-users.sh"
 "$HERE/lab-status.sh"

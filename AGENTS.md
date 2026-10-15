@@ -34,7 +34,7 @@ git-ignored `.env` and the VM list from `scripts/inventory.conf`.
 | **add N students** | `scripts/add-students.sh N` |
 | **fix / reconfigure one sandbox** | `scripts/provision-sandbox.sh <vmid>` |
 | **reset a student's sandbox** (wipe + re-clone; `--client` too) | `scripts/reset-student.sh <student> [--client]` |
-| **student can't see their VM** in the Proxmox UI (esp. after a reset) | `scripts/sync-acls.sh` |
+| **student can't see their VM** in the Proxmox UI | `scripts/sync-acls.sh` — but `reset-student` / `add-students` / `build-client-template` / `lab-rebuild` / `restore-ebs-lab` now re-assert ACLs automatically |
 | **create the class EBS logins** (functional users) | `scripts/create-class-users.sh` |
 | **reset an EBS login password** (e.g. a student's) | `scripts/reset-ebs-password.sh <user> <password>` — or `--students` for all |
 | **back up the golden + templates** (DR, in place) | `scripts/export-images.sh` |

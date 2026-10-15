@@ -131,6 +131,10 @@ for row in $(ebs_rows | awk '$1!=9010{print $1}'); do
     && ok "created $name ($cli, ${CLIENT_MEM}MB, agent=1)" || warn "clone/set $cli"
 done
 
+# Re-cloning destroyed the client VMs (and with them their ACLs) — re-assert the
+# students' access so they can still see their client VM in the Proxmox UI.
+"$HERE/scripts/sync-acls.sh" || warn "sync-acls failed (students may not see their client VM)"
+
 echo; echo "=== 8/8  start clients + verify ==="
 for row in $(client_rows | awk '{print $1}'); do qm start "$row" >/dev/null 2>&1 || true; done
 sleep 40

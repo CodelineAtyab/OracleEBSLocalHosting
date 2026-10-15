@@ -795,6 +795,15 @@ there is no `golden-clean` snapshot to roll back.
   VNC advice). Hardened so it can't recur: **`backup-to-usb.sh`** now strips
   `/root/.bash_history` and any `*cloudflared*`/`token` file from a backup, and
   **`AGENTS.md`** forbids documenting remote-access details.
+- **2026-10-15** — **Student VM ACLs repaired + made automatic.** After the recent
+  client-template rebuilds (guest agent, then Geany) students could see their EBS
+  sandbox but **not their client VM**: `build-client-template.sh` runs
+  `qm destroy <client> --purge`, which **deletes the VM's ACL**, and nothing
+  re-asserted it (so `/vms/9201–9209` had no `PVEVMUser`). Repaired with
+  `scripts/sync-acls.sh` (all 18 paths restored). Hardened: the VM-lifecycle scripts
+  now re-assert ACLs themselves — **`reset-student.sh`**, **`add-students.sh`**,
+  **`build-client-template.sh`**, **`lab-rebuild.sh`** and **`restore-ebs-lab.sh`**
+  (both restore branches).
 - **2026-10-12** — **Destroyed VM 100** (`qm destroy 100 --purge`) to free its
   ~30 GB thin volume; removed the now-dead VM-100 step from `scripts/lab-stop.sh`
   and the doc references. The host now runs only lab VMs.

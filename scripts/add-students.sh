@@ -78,6 +78,9 @@ for k in $(seq 1 "$N"); do
   echo "  $u -> /vms/$((9100+max+k)) + /vms/$((9200+max+k))"
 done
 
+# Re-assert every student's VM ACLs (destroy/re-clone drops them).
+"$HERE/sync-acls.sh" || echo "WARN: sync-acls failed"
+
 echo
 echo "Done. Next: create the EBS login(s) on the class instance with"
 echo "  scripts/create-class-users.sh"

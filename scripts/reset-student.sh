@@ -73,4 +73,8 @@ if [ "$WITH_CLIENT" = 1 ]; then
   echo "== (re)writing the access sheet on client $CLI =="
   "$HERE/client/write-access-file.sh" "$CLI" || echo "WARN: access-sheet generation failed"
 fi
+
+# Always re-assert every student's VM ACLs (`qm destroy --purge` drops them).
+echo "== re-asserting student VM ACLs =="
+"$HERE/sync-acls.sh" || echo "WARN: sync-acls failed"
 echo "== reset complete: student $N sandbox $EBS restored and healthy =="

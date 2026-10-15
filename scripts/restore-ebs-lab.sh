@@ -61,6 +61,8 @@ else
   echo "  no student backups — rebuilding class + $N students from templates"
   bash "$REPO/scripts/lab-rebuild.sh" "$N"
 fi
+# Always re-assert the students' VM ACLs (qm destroy/qmrestore drop them).
+bash "$REPO/scripts/sync-acls.sh" || echo "  WARN: sync-acls failed"
 # Always (re)assert the class EBS logins to the documented default password,
 # including when a class instance was restored from a backup (its STU* passwords
 # may have drifted).
