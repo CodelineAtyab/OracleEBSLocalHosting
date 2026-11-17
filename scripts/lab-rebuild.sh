@@ -31,4 +31,6 @@ EOF
 "$HERE/add-students.sh" "$N"
 "$HERE/sync-acls.sh"
 "$HERE/create-class-users.sh"
+# Status portal (LXC 9300). Non-fatal: the lab is usable without it.
+bash "$HERE/portal/portal-install.sh" || echo "  WARN: status portal install failed (page unavailable)"
 "$HERE/lab-status.sh"

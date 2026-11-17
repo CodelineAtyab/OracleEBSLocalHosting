@@ -4,7 +4,7 @@ Live status of the EBS lab build. **Update this file as you go** — it is the
 "where did I leave off" record. Plan details live in `README.md`, `PLAN.md`,
 `MVP-RUNBOOK.md`; this file only tracks *execution*.
 
-- **Last updated:** 2026-10-07
+- **Last updated:** 2026-11-17
 - **Overall status:** Stages 0–6 done · class `9010` **LIVE** · client template
   `9200` **BUILT + Forms-verified** (clones `9201–9209`) · **EBS sandboxes
   `9101–9109` LIVE** — all ten EBS instances return **302**. `ebs-staging` retired.
@@ -807,3 +807,82 @@ there is no `golden-clean` snapshot to roll back.
 - **2026-10-12** — **Destroyed VM 100** (`qm destroy 100 --purge`) to free its
   ~30 GB thin volume; removed the now-dead VM-100 step from `scripts/lab-stop.sh`
   and the doc references. The host now runs only lab VMs.
+
+---
+
+## 2026-11-14 — Status portal (LXC 9300, `http://192.168.100.250:8080/`)
+
+- Built **`lab-portal`** (LXC **9300**): unprivileged Debian 13, 1 vCPU / 512 MB /
+  2 GB on `local-lvm`, static **192.168.100.250**, `onboot=1`,
+  `startup order=1`, `protection=1`. Serves a read-only status board with every
+  student's **client + sandbox**, their **live addresses** (client DHCP IPs read
+  from the QEMU guest agent), `AppsLogin`/DB/VNC badges, copy buttons, `?stu=NN`
+  highlight and warnings (stopped VM, agent silent, **IP conflict**, AppsLogin
+  not 302, endpoint down).
+- Components: **nginx** (static only, `:8080`, `no-store` on `state.json`, strict
+  CSP, noindex, no listings, `.tmp`/dotfiles denied) + **one** `collect.py`
+  process (serial pass, 10 s gap, 5 s timeouts, 30 s cycle budget with resume;
+  ~3 s per pass for the current 19 guests).
+- Access: read-only token **`portal@pve!collector`** with **`PVEAuditor`**,
+  verified `GET` → 200 and `POST` → 403. The token file exists only inside the
+  container (`/etc/lab-portal/site-a.token`, 0600) and is recreated by
+  `portal-install.sh` — never in the repo.
+- Multi-host ready: `/etc/lab-portal/endpoints.conf` is
+  `<label> <url> <token-file>`; a Proxmox cluster is one endpoint, standalone
+  hosts are one line each; guests are keyed `(site, vmid)` because VMIDs collide
+  across independent hosts. `scripts/portal/portal-add-host.sh` adds a host.
+- `cloudflared` was installed on 2026-11-14 and **removed the same day**. Pointing
+  it at the host's existing tunnel token produced a second connector: requests
+  flapped between the two, so 9300 was stopped and rebuilt **without** it. Publish
+  the page with a public hostname on the **host's** tunnel, service
+  `http://lab-portal.lab:8080` (never `:8006`). `lab-portal.lab` is mapped in the
+  host's `/etc/hosts` by `portal-install.sh`; `PORTAL_MAC` is pinned so a router
+  DHCP reservation survives rebuilds.
+- Verified: 19/19 guests with correct IPs; security headers + CSP; `/healthz`;
+  headless render (jsdom) = 9 student cards + class card, highlight, links;
+  bogus-endpoint test (down host → warning, other site unaffected, `complete:
+  false`); `pct reboot` → page back and collector resumes by itself.
+- **Finding from the board:** `client-stu03` shows **VNC 5900 red** — its
+  `x11vnc` is stuck in the "waiting for display" loop because `-auth guess`
+  needs `netstat` (net-tools is absent on OL7) and lightdm's X auth is not
+  discoverable. Fix later in the client template (`net-tools`, or pin
+  `-auth /var/run/lightdm/root/:0`).
+- New files: `scripts/portal/collect.py`, `portal.conf`,
+  `nginx-headers.conf`, `nginx-lab-portal.conf`,
+  `lab-portal-collect.service`, `portal-install.sh`, `portal-rebuild.sh`,
+  `portal-add-host.sh`, `web/{index.html,app.js,style.css}`. Wired into
+  `lab-start.sh` (starts it first), `lab-status.sh` (portal row),
+  `lab-rebuild.sh`, `restore-ebs-lab.sh`, `run.sh` and `Makefile`.
+
+## 2026-11-17 — Unclean power loss + boot autostart
+
+**Incident:** on 2026-11-17 the whole lab was found stopped while the host had
+been up since 2026-11-16 21:19. Cause: **no one stopped it** — the host lost
+power at **2026-11-15 15:45:52**. That is the last journal line of the previous
+boot; there is no `System is powering down`, no `Reached target Power-Off`, no
+`qmstop`/`stopall` task and no login after 2026-11-14 13:01. The box was then
+powered on ~29 h later. All lab guests are `onboot=0` and EBS does not autostart,
+so only the portal LXC `9300` (`onboot=1`, started by `pve-guests.service`)
+came back. That lone `startall` task at 21:21 is the boot autostart, not a human.
+
+**Fix — boot autostart (new):** `scripts/install-lab-autostart.sh` installs and
+enables, on the host:
+
+- `ebs-lab-autostart.timer` — `OnBootSec=2min`
+- `ebs-lab-autostart.service` — `Type=oneshot`, runs `scripts/lab-start.sh`
+  behind `flock -n /run/lock/ebs-lab-start.lock`
+
+So a boot now boots the VMs, starts each Oracle DB + app tier over SSH, waits
+for `AppsLogin`=302, then starts the clients — the same path as a manual
+`lab-start.sh`, with `CONCURRENCY=4` to protect the HDD. A plain
+`qm set --onboot 1` was rejected for the EBS guests: it would power them on but
+leave EBS down (appliance does not autostart the tiers) and start them all at
+once. Templates `9000`/`9200` and the clients stay `onboot=0`.
+
+Also: `lab-start.sh` now takes a non-blocking lock for full-lab runs only (its
+internal `--one-ebs`/`--one-client` workers bypass it), so a boot run and a
+manual run cannot overlap. `run.sh autostart`, `make autostart`,
+`restore-ebs-lab.sh` (re-installs it on a restored host), `README.md` §14 and
+`AGENTS.md` were updated. `install-lab-autostart.sh --remove` turns it off; note
+`lab-stop.sh` does **not** disable it, so a maintenance boot needs `--remove`
+first.

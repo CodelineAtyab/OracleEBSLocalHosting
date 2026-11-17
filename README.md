@@ -80,6 +80,8 @@ flowchart TB
         GOLDEN ==>|"full clone"| CLASS
         GOLDEN ==>|"linked clones (--full 0)"| EBSBOX
         CTMPL ==>|"linked clones (--full 0)"| CLIENT
+
+        PORTAL["LXC 9300 · lab-portal · 192.168.100.250<br/>read-only status page :8080<br/>live client + sandbox addresses"]
     end
 
     subgraph NET["Lab network — vmbr0 192.168.100.0/24 (no VLAN yet)"]
@@ -146,6 +148,7 @@ flowchart TB
 | **Proxmox student users** | — | `stu01–stu09@pve`, role `PVEVMUser` on their client + sandbox | Scoped noVNC console/power access to their own two VMs only |
 | **Staging VM** | — | Debian VM **retired 2026-10-03** (media kept on `/srv/ebs-media`) | Only downloaded/extracted the appliance; no longer present |
 | **Lab network** | `vmbr0` | 192.168.100.0/24 — EBS static IPs + `/etc/hosts`; clients DHCP | Name resolution via `/etc/hosts` (`ebs.example.com` → class). Isolated `vmbr1` VLAN still planned |
+| **Status portal** | LXC 9300 | Debian 13 container · **static `.250`** · nginx `:8080` | Read-only board: every client's live DHCP address + every sandbox address, health badges and warnings |
 
 > The class instance and every sandbox are **full EBS installations** (their own DB
 > + app tier), so clones are independent. Disk is preserved by **linked clones**
@@ -168,6 +171,9 @@ Proxmox VE 9.2.20 host (DL360 · 40c/80t · 188 GiB RAM · ~1.67 TiB LVM-thin)
 |  VM 9200  client-template  (OL7.9 + Xfce + FF ESR52 x64 + OpenJDK8/IcedTea-Web)
 |     `-- linked clones ----->   VMs 9201-9209  client-stuNN  DHCP  (Forms desktops)
 |                                (target: stu10-12 -> 9210-9212)
+|
+|  LXC 9300  lab-portal  .250   [read-only status page  http://192.168.100.250:8080/]
+|     `-- polls :8006 (PVEAuditor token) + each guest's agent; nginx :8080
 |
 `  network: vmbr0 192.168.100.0/24  -- EBS static IPs + /etc/hosts; clients DHCP
              (flat-LAN pool overlaps the static range -- pick ARP-free IPs;
@@ -680,6 +686,50 @@ make up | down | status | init N=8 | provision VM=9101 | class-users | export
 | `scripts/lab-start.sh` | Boot every EBS VM, start the Oracle DB + app tier, wait for `AppsLogin`=302, then boot the client VMs. `lab-start.sh ebs` / `clients` does one half. Honours `CONCURRENCY` (default 4). |
 | `scripts/lab-stop.sh` | Cleanly stop the lab (EBS: `stopapps`→`stopvisiondb`→`shutdown`; clients: `qm stop`). `--poweroff` also powers off the host. |
 | `scripts/lab-status.sh` | Table of each VM's state plus the `AppsLogin` code for running EBS guests. |
+| `scripts/install-lab-autostart.sh` | Make the lab come back by itself after a host boot: installs `ebs-lab-autostart.timer` + `.service`, which run `lab-start.sh` 2 min after boot. `--status` / `--remove` to inspect or turn it off. |
+
+### Status portal (LXC 9300 — `http://192.168.100.250:8080/`)
+
+A read-only single page showing every student's **client** and **sandbox** with
+their **live addresses**, refreshed every ~10 s: VM state, client IP (from the
+guest agent), sandbox IP, `AppsLogin` 302 / DB 1521 / VNC 5900 badges, copy
+buttons, a "you are stuNN" highlight (`?stu=03` also works) and warnings (stopped
+VM, agent silent, **IP conflict**, AppsLogin not 302, unreachable host).
+
+| Piece | Detail |
+|-------|--------|
+| Container | unprivileged Debian 13 LXC, 1 vCPU / 512 MB / 2 GB, static `.250`, `onboot`, `startup order=1` (up before the lab) |
+| Stable origin | the address is **static**, and the installer maps **`lab-portal.lab`** in the host's `/etc/hosts` + pins the MAC (`PORTAL_MAC`). Point the tunnel at `http://lab-portal.lab:8080`: an IP change is then one line in `portal.conf` + a re-run, and a router DHCP reservation for `.250` survives rebuilds |
+| Web tier | nginx `:8080`, static files only, `no-store` on `state.json`, CSP / noindex / no directory listing |
+| Collector | one `collect.py` process: serial pass, `COLLECT_INTERVAL=10`, `PROBE_TIMEOUT=5`, `CYCLE_BUDGET=30`, resumes where it stopped |
+| API access | read-only token `portal@pve!collector` with `PVEAuditor` — GETs work, writes return 403. Token files live in the container (`/etc/lab-portal/*.token`, 0600), **never in the repo** |
+| Multi-host | `endpoints.conf` = `<label> <url> <token-file>`; a Proxmox cluster is one endpoint, standalone hosts are one line each (guests keyed by `site/vmid`, since VMIDs collide across hosts) |
+| Client VNC check | probed every 6th pass (`VNC_PROBE_EVERY`) — each probe shows up in the guest's `x11vnc` log, and the answer rarely changes |
+| Container root | the lab password from `.env` (`OS_ROOT_PASSWORD`), or `PORTAL_ROOT_PASSWORD` if set; access without a password via `pct enter 9300` |
+| Files | `scripts/portal/` — `collect.py`, `web/`, `nginx-*.conf`, `lab-portal-collect.service`, `portal.conf` |
+
+```bash
+scripts/portal/portal-install.sh                # create + configure (idempotent)
+scripts/portal/portal-install.sh --web-only     # re-push the page and reload nginx
+scripts/portal/portal-rebuild.sh                # destroy + recreate the container
+scripts/portal/portal-add-host.sh site-b https://192.168.100.50:8006 /root/site-b.token
+```
+
+The container deliberately **does not ship `cloudflared`**. Publish the page with a
+public hostname on the **host's existing tunnel**, pointing at
+`http://lab-portal.lab:8080` — never at `:8006`. Running a second connector with
+the same tunnel token inside this container conflicts with the host's connector
+(requests flap between the two); that is why the binary was removed on 2026-11-14.
+
+> **Security stance (2026-11-14).** The page is **unauthenticated** and shows full
+> LAN addresses by decision. It is **read-only by construction**: no write
+> endpoints, no passwords, no VNC PIN, no Proxmox UI link — so publishing it
+> grants no control over the lab. Do **not** publish the Proxmox UI, noVNC,
+> AppsLogin or SSH through the same tunnel, and never add a write endpoint here.
+
+`pct stop 9300` takes the board down without touching the lab; `lab-start.sh`
+starts it first, `lab-status.sh` prints its row, and `lab-rebuild.sh` /
+`restore-ebs-lab.sh` rebuild it.
 
 ### Lifecycle / maintenance
 | Script | What it does |
@@ -702,6 +752,9 @@ make up | down | status | init N=8 | provision VM=9101 | class-users | export
 | `scripts/restore-ebs-lab.sh` | **Run on a fresh Proxmox host** from a backup dir: restores templates + repo, rebuilds the fleet, starts the lab. |
 | `scripts/export-images.sh [--storage S]` | DR: `vzdump` the golden + client template (in place). |
 | `scripts/build-golden.sh --yes` | Rare DR: rebuild the golden `9000` from pristine media (see §6–§8). |
+| `scripts/portal/portal-install.sh [--web-only\|--rotate-token]` | Build/refresh the status portal LXC `9300` (see “Status portal” above). |
+| `scripts/portal/portal-rebuild.sh` | Destroy + recreate the portal container (the page and token are reproducible). |
+| `scripts/portal/portal-add-host.sh <label> <url> <token-file>` | Add another Proxmox host/cluster to the board. |
 
 ### Support files
 | File | Purpose |
@@ -719,6 +772,34 @@ scripts/lab-status.sh
 scripts/lab-stop.sh
 scripts/lab-stop.sh --poweroff
 ```
+
+### Boot autostart (installed 2026-11-17)
+
+The lab comes back **by itself** after a host boot:
+`ebs-lab-autostart.timer` fires `ebs-lab-autostart.service` **2 min after boot**,
+which runs `scripts/lab-start.sh` (EBS VMs → Oracle DB/app tier → wait for
+`AppsLogin`=302 → client VMs). The run is journalled:
+`journalctl -u ebs-lab-autostart -b`.
+
+Why a timer and not `qm set --onboot 1`: onboot only powers a VM on — the
+appliance's DB and app tier stay down, so Applications would still be offline.
+The timer reuses the same boot order and `CONCURRENCY=4` cap as a manual
+`lab-start.sh`, and only boots the clients once EBS is healthy. `lab-start.sh`
+is idempotent and takes a lock (`/run/lock/ebs-lab-start.lock`), so a boot run
+and a manual run cannot overlap. The status portal LXC `9300` keeps
+`onboot=1`/`startup order=1`, so the board is up first and shows the lab
+coming online. Templates `9000`/`9200` stay `onboot=0` and are never started.
+
+```bash
+scripts/install-lab-autostart.sh            # install/re-assert (idempotent)
+scripts/install-lab-autostart.sh --status   # units + timer + onboot flags
+scripts/install-lab-autostart.sh --remove   # stop doing this at boot
+systemctl start ebs-lab-autostart.service   # run it now (same as lab-start.sh)
+```
+
+Note: `lab-stop.sh` does **not** disable the timer — the next boot brings the
+lab back. Disable it first (or use `--remove`) if a boot should stay down (e.g.
+maintenance, BIOS work).
 
 **Addressing caveat:** on the flat LAN the router's DHCP pool overlaps the static
 range, so an IP may already be in use — `add-students.sh` ARP-scans for free
@@ -776,7 +857,7 @@ reconstruct `9000` without internet —
 | `RESEARCH.md` | Platform research + decision record (12.1.3 vs 12.2.12, sources) |
 | `MVP-RUNBOOK.md` | Literal step-by-step for the first working instance (MVP-A/B) |
 | `PHASE1-CHECKLIST.md` | Tickable Phase 1 execution checklist (host verify + appliance download) |
-| `scripts/` | Operate + rebuild + back up the lab: `lab-start/stop/status.sh`, `add-students.sh`, `lab-rebuild.sh`, `create-class.sh`, `provision-sandbox.sh`, `reset-student.sh`, `sync-acls.sh`, `create-class-users.sh`, `backup-to-usb.sh`, `restore-ebs-lab.sh`, `export-images.sh`, `build-golden.sh`, `inventory.conf`, `lib.sh`, `guest/`, `client/` (see §14) |
+| `scripts/` | Operate + rebuild + back up the lab: `lab-start/stop/status.sh`, `add-students.sh`, `lab-rebuild.sh`, `create-class.sh`, `provision-sandbox.sh`, `reset-student.sh`, `sync-acls.sh`, `create-class-users.sh`, `backup-to-usb.sh`, `restore-ebs-lab.sh`, `export-images.sh`, `build-golden.sh`, `inventory.conf`, `lib.sh`, `guest/`, `client/`, `portal/` (see §14) |
 | `run.sh` | Dependency-free entrypoint: `./run.sh up|down|status|init N|...` |
 | `Makefile` | Optional same commands for `make` users (`make up`, `make init N=3`) |
 

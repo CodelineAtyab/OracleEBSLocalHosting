@@ -63,3 +63,8 @@ else
   echo
   echo "All guests stopped. Power off the host with:  systemctl poweroff"
 fi
+if [ -f /etc/systemd/system/ebs-lab-autostart.timer ] && \
+   systemctl is-enabled ebs-lab-autostart.timer >/dev/null 2>&1; then
+  echo "note: boot autostart is enabled — the lab comes back ~2 min after the next host boot."
+  echo "      keep a boot down with: scripts/install-lab-autostart.sh --remove"
+fi

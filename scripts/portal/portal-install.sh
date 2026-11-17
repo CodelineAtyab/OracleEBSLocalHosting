@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# portal-install.sh - create/refresh the EBS lab status portal (LXC 9300).
+#
+#   scripts/portal-install.sh                 # full install (idempotent)
+#   scripts/portal-install.sh --web-only      # just re-push the page + reload nginx
+#   scripts/portal-install.sh --rotate-token  # recreate the Proxmox API token
+#
+# The container serves a read-only page on http://<PORTAL_IP>:<PORTAL_PORT>/.
+# The Proxmox API token is created here, pushed into the container (0600) and
+# never written to the repo.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+
+# shellcheck disable=SC1091
+. "$HERE/portal.conf"
+
+if [ -f "$REPO/.env" ]; then
+  # shellcheck disable=SC1091
+  . "$REPO/.env"
+fi
+ROOTPW="${PORTAL_ROOT_PASSWORD:-${OS_ROOT_PASSWORD:-}}"
+
+ROTATE=0
+WEB_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --rotate-token)   ROTATE=1 ;;
+    --web-only)       WEB_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+say()  { printf '\n==> %s\n' "$*"; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
+in_ct() { pct exec "$PORTAL_VMID" -- "$@"; }
+have_ct() { pct status "$PORTAL_VMID" >/dev/null 2>&1; }
+
+ct_state() { pct status "$PORTAL_VMID" 2>/dev/null | awk '{print $2}'; }
+
+wait_ready() {
+  local i
+  for i in $(seq 1 60); do
+    in_ct true >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_net() {
+  local i
+  for i in $(seq 1 30); do
+    in_ct getent hosts deb.debian.org >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# 1. template + container
+# --------------------------------------------------------------------------
+# The container has a static address, but pinning a *name* keeps the Cloudflare
+# ingress independent of it: point the tunnel at http://lab-portal.lab:8080 and
+# an IP change is a one-line edit here (re-run this script).
+ensure_hosts_alias() {
+  local name="lab-portal.lab"
+  if grep -q "$name" /etc/hosts 2>/dev/null; then
+    sed -i "s|^[0-9.]\+[[:space:]]\+$name.*|${PORTAL_IP} $name lab-portal|" /etc/hosts
+  else
+    printf '\n# EBS lab status portal (managed by scripts/portal/portal-install.sh)\n%s %s lab-portal\n' \
+      "$PORTAL_IP" "$name" >> /etc/hosts
+  fi
+}
+
+ensure_template() {
+  if pveam list "$PORTAL_TMPL_STORAGE" 2>/dev/null | grep -q "$PORTAL_TEMPLATE"; then
+    return 0
+  fi
+  say "downloading $PORTAL_TEMPLATE"
+  pveam update >/dev/null 2>&1 || true
+  pveam download "$PORTAL_TMPL_STORAGE" "$PORTAL_TEMPLATE"
+}
+
+create_container() {
+  if have_ct; then
+    say "container $PORTAL_VMID exists - reusing"
+    return 0
+  fi
+  say "creating LXC $PORTAL_VMID ($PORTAL_HOSTNAME, $PORTAL_IP)"
+  local tpl="${PORTAL_TMPL_STORAGE}:vztmpl/${PORTAL_TEMPLATE}"
+  local -a opts=(
+    --hostname "$PORTAL_HOSTNAME"
+    --cores "$PORTAL_CORES"
+    --memory "$PORTAL_MEMORY"
+    --swap "$PORTAL_SWAP"
+    --rootfs "${PORTAL_STORAGE}:${PORTAL_DISK}"
+    --net0 "name=eth0,bridge=vmbr0,ip=${PORTAL_IP}/24,gw=${PORTAL_GW},hwaddr=${PORTAL_MAC}"
+    --nameserver "$PORTAL_GW"
+    --unprivileged 1
+    --onboot 1
+    --startup "order=1,up=10"
+    --description "EBS lab status portal - http://${PORTAL_IP}:${PORTAL_PORT}/"
+  )
+  if [ -n "$ROOTPW" ]; then
+    opts+=(--password "$ROOTPW")
+  fi
+  pct create "$PORTAL_VMID" "$tpl" "${opts[@]}"
+  pct set "$PORTAL_VMID" --protection 1
+}
+
+start_container() {
+  if [ "$(ct_state)" != running ]; then
+    say "starting container"
+    pct start "$PORTAL_VMID"
+  fi
+  wait_ready || { echo "container did not come up" >&2; exit 1; }
+  wait_net || warn "network/DNS not ready - apt may fail"
+}
+
+# --------------------------------------------------------------------------
+# 2. packages
+# --------------------------------------------------------------------------
+install_packages() {
+  say "installing nginx + curl"
+  in_ct env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  if ! in_ct env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        --no-install-recommends nginx-light curl ca-certificates; then
+    warn "nginx-light unavailable - falling back to nginx"
+    in_ct env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+      --no-install-recommends nginx curl ca-certificates
+  fi
+}
+
+# --------------------------------------------------------------------------
+# 3. files
+# --------------------------------------------------------------------------
+push_files() {
+  say "pushing collector + web page"
+  in_ct install -d -m 0755 /opt/lab-portal /etc/lab-portal /var/www/lab-portal
+  pct push "$PORTAL_VMID" "$HERE/collect.py" /opt/lab-portal/collect.py --perms 0755
+  local file
+  for file in index.html app.js style.css; do
+    pct push "$PORTAL_VMID" "$HERE/web/$file" "/var/www/lab-portal/$file" --perms 0644
+  done
+}
+
+write_runtime_conf() {
+  local tmp
+  tmp=$(mktemp)
+  cat >"$tmp" <<EOF
+# generated by portal-install.sh - do not edit inside the container
+COLLECT_INTERVAL=${COLLECT_INTERVAL}
+PROBE_TIMEOUT=${PROBE_TIMEOUT}
+CYCLE_BUDGET=${CYCLE_BUDGET}
+APP_PORT=${APP_PORT}
+APPS_PATH=${APPS_PATH}
+DB_PORT=${DB_PORT}
+DB_SID=${DB_SID}
+VNC_PORT=${VNC_PORT}
+VNC_PROBE_EVERY=${VNC_PROBE_EVERY}
+WEB_ROOT=${WEB_ROOT}
+ENDPOINTS_FILE=${ENDPOINTS_FILE}
+EOF
+  pct push "$PORTAL_VMID" "$tmp" /etc/lab-portal/portal.conf --perms 0644
+  rm -f "$tmp"
+}
+
+write_endpoints() {
+  local label="$1" url="$2" tmp keep
+  tmp=$(mktemp)
+  keep=""
+  if in_ct test -f "$ENDPOINTS_FILE"; then
+    keep=$(in_ct cat "$ENDPOINTS_FILE" | awk -v l="$label" 'NF==3 && $1!=l')
+  fi
+  {
+    echo "# <label> <url> <token-file> - managed by portal-install.sh / portal-add-host.sh"
+    printf '%s %s /etc/lab-portal/%s.token\n' "$label" "$url" "$label"
+    if [ -n "$keep" ]; then
+      printf '%s\n' "$keep"
+    fi
+  } >"$tmp"
+  pct push "$PORTAL_VMID" "$tmp" "$ENDPOINTS_FILE" --perms 0600
+  rm -f "$tmp"
+}
+
+ensure_token() {
+  local label="$1"
+  if [ "$ROTATE" = 0 ] && in_ct test -s "/etc/lab-portal/${label}.token"; then
+    say "reusing existing API token file for $label"
+    return 0
+  fi
+  say "creating read-only Proxmox API token portal@pve!collector"
+  pveum user add portal@pve --comment "EBS lab status portal (read-only)" >/dev/null 2>&1 || true
+  pveum acl modify / --users portal@pve --roles PVEAuditor >/dev/null
+  pveum user token remove portal@pve collector >/dev/null 2>&1 || true
+  local json secret tmp
+  json=$(pveum user token add portal@pve collector --privsep 0 --output-format json)
+  secret=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+  tmp=$(mktemp)
+  # the file holds the full "user@realm!tokenid=secret" string
+  ( umask 077; printf 'portal@pve!collector=%s\n' "$secret" >"$tmp" )
+  pct push "$PORTAL_VMID" "$tmp" "/etc/lab-portal/${label}.token" --perms 0600
+  rm -f "$tmp"
+  unset secret json
+}
+
+# --------------------------------------------------------------------------
+# 4. nginx + service
+# --------------------------------------------------------------------------
+install_nginx() {
+  say "installing nginx vhost"
+  pct push "$PORTAL_VMID" "$HERE/nginx-headers.conf" \
+    /etc/nginx/snippets/lab-portal-headers.conf --perms 0644
+  pct push "$PORTAL_VMID" "$HERE/nginx-lab-portal.conf" \
+    /etc/nginx/sites-available/lab-portal --perms 0644
+  in_ct ln -sfn /etc/nginx/sites-available/lab-portal /etc/nginx/sites-enabled/lab-portal
+  in_ct rm -f /etc/nginx/sites-enabled/default
+  in_ct nginx -t
+  in_ct systemctl enable nginx >/dev/null
+  in_ct systemctl reload-or-restart nginx
+}
+
+install_service() {
+  say "installing collector service"
+  pct push "$PORTAL_VMID" "$HERE/lab-portal-collect.service" \
+    /etc/systemd/system/lab-portal-collect.service --perms 0644
+  in_ct systemctl daemon-reload
+  in_ct systemctl enable lab-portal-collect.service >/dev/null
+  in_ct systemctl restart lab-portal-collect.service
+}
+
+verify() {
+  say "verifying"
+  in_ct python3 /opt/lab-portal/collect.py --once | sed 's/^/    /'
+  sleep 1
+  printf '    healthz : '; curl -fsS "http://${PORTAL_IP}:${PORTAL_PORT}/healthz"
+  printf '    page    : '
+  curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' "http://${PORTAL_IP}:${PORTAL_PORT}/"
+  printf '    data    : '
+  curl -fsS "http://${PORTAL_IP}:${PORTAL_PORT}/state.json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+up = sum(1 for g in d['guests'] if g['state'] == 'running')
+print('HTTP 200, %d guests (%d running), %d warning(s)'
+      % (len(d['guests']), up, len(d['warnings'])))
+"
+  printf '    nginx   : '; in_ct nginx -t 2>&1 | tail -1
+}
+
+# --------------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------------
+if [ "$WEB_ONLY" = 1 ]; then
+  ensure_hosts_alias
+  push_files
+  install_nginx
+  verify
+  exit 0
+fi
+
+ensure_template
+create_container
+start_container
+ensure_hosts_alias
+install_packages
+push_files
+write_runtime_conf
+write_endpoints "$PORTAL_SITE_LABEL" "$PORTAL_ENDPOINT_URL"
+ensure_token "$PORTAL_SITE_LABEL"
+install_nginx
+install_service
+verify
+
+say "done"
+echo "    status board : http://${PORTAL_IP}:${PORTAL_PORT}/"
+echo "    container    : pct enter ${PORTAL_VMID}"
+echo "    add a host   : ${HERE}/portal-add-host.sh <label> <api-url> <token-file>"

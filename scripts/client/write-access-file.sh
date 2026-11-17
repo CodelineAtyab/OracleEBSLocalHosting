@@ -136,6 +136,18 @@ while read -r id name role xip; do
     if grep -q '^127\.0\.1\.1' /etc/hosts; then sed -i 's/^127\.0\.1\.1.*/127.0.1.1 $cname/' /etc/hosts
     else echo '127.0.1.1 $cname' >> /etc/hosts; fi
     hostname '$cname' 2>/dev/null || true
+    # X11: the MIT cookie in /run/lightdm/root/:0 belongs to the hostname that was
+    # current when lightdm started.  After a rename, x11vnc can no longer
+    # authenticate (\"auth failed for display :0\"), so alias the new name and
+    # restart it.  Verified 2026-11-14 on client-stu03.
+    auth=/run/lightdm/root/:0
+    if [ -f \"\$auth\" ] && ! xauth -f \"\$auth\" list 2>/dev/null | grep -q '^$cname/unix:0'; then
+      cookie=\$(xauth -f \"\$auth\" list 2>/dev/null | awk 'NR==1{print \$3}')
+      if [ -n \"\$cookie\" ]; then
+        xauth -f \"\$auth\" add '$cname/unix:0' MIT-MAGIC-COOKIE-1 \"\$cookie\" 2>/dev/null || true
+        systemctl restart x11vnc >/dev/null 2>&1 || true
+      fi
+    fi
   " </dev/null >/dev/null 2>&1 || true
 
   # the sheet

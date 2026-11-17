@@ -151,13 +151,24 @@ Description=x11vnc - share the console display :0 (VNC on port 5900)
 After=display-manager.service network.target
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -display :0 -auth guess -forever -shared -loop \
+# Pin lightdm's X authority path: "-auth guess" needs netstat (net-tools),
+# which OL7 minimal does not install.  See write-access-file.sh for the
+# hostname/cookie alias that keeps this working after a rename.
+ExecStart=/usr/bin/x11vnc -display :0 -auth /run/lightdm/root/:0 -forever -shared -loop \
   -rfbauth /etc/x11vnc.pass -rfbport 5900 -o /var/log/x11vnc.log
 Restart=on-failure
 RestartSec=3
 [Install]
 WantedBy=multi-user.target
 UNIT
+  # Bind the X cookie to the current hostname as well (see write-access-file.sh).
+  auth=/run/lightdm/root/:0
+  if [ -f "$auth" ] && ! xauth -f "$auth" list 2>/dev/null | grep -q "^$(hostname)/unix:0"; then
+    cookie=$(xauth -f "$auth" list 2>/dev/null | awk 'NR==1{print $3}')
+    if [ -n "$cookie" ]; then
+      xauth -f "$auth" add "$(hostname)/unix:0" MIT-MAGIC-COOKIE-1 "$cookie" 2>/dev/null || true
+    fi
+  fi
   systemctl daemon-reload >/dev/null 2>&1
   systemctl enable x11vnc.service >/dev/null 2>&1
   systemctl restart x11vnc.service >/dev/null 2>&1 || true

@@ -4,10 +4,12 @@
 #   scripts/lab-start.sh              # everything: EBS guests + client VMs
 #   scripts/lab-start.sh ebs          # EBS guests only (boot + start DB/app tier)
 #   scripts/lab-start.sh clients      # client VMs only
+#   scripts/lab-start.sh portal       # status page container only (LXC 9300)
 #
 # Boots the EBS VMs, waits for SSH, starts the Oracle DB and the app tier
 # (startvisiondb.sh + startapps.sh) on each, waits until AppsLogin returns 302,
 # then boots the client VMs. Idempotent: already-running services are skipped.
+# The status portal container (LXC 9300) is started first when present.
 #
 # Concurrency is capped by $CONCURRENCY (default 4) to avoid HDD thrash.
 set -u
@@ -47,15 +49,39 @@ ONE_CLIENT() {
   echo "  $name: VM started"
 }
 
+# Status portal (LXC 9300) - no-op on a host where it was never installed.
+start_portal() {
+  local conf="$HERE/portal/portal.conf"
+  [ -f "$conf" ] || return 0
+  # shellcheck disable=SC1091
+  . "$conf"
+  pct status "$PORTAL_VMID" >/dev/null 2>&1 || return 0
+  pct status "$PORTAL_VMID" | grep -qw running \
+    || pct start "$PORTAL_VMID" >/dev/null 2>&1 || true
+  echo "  portal: http://$PORTAL_IP:$PORTAL_PORT/  (LXC $PORTAL_VMID)"
+}
+
 case "${1:-}" in
   --one-ebs)    shift; ONE_EBS "$@";    exit 0 ;;
   --check-ebs)  shift; CHECK_EBS "$@";  exit 0 ;;
   --one-client) shift; ONE_CLIENT "$@"; exit 0 ;;
+  --portal)     start_portal;           exit 0 ;;
 esac
 
 # ---------- main ------------------------------------------------------------
+# Serialize full-lab runs (manual + the boot autostart timer). Workers invoked
+# above exit before reaching this, so they never contend for the lock.
+exec 9>/run/lock/ebs-lab-start.lock
+flock -n 9 || { echo "== lab-start: another run is already in progress — nothing to do =="; exit 0; }
+
 WHAT="${1:-all}"
 CONCURRENCY="${CONCURRENCY:-4}"
+
+if [ "$WHAT" = portal ]; then
+  echo "== lab-start: status portal only =="
+  start_portal
+  exit 0
+fi
 
 EBS_LIST=$(mktemp); CLI_LIST=$(mktemp)
 { [ "$WHAT" = clients ] || ebs_rows;    } > "$EBS_LIST"
@@ -64,6 +90,7 @@ trap 'rm -f "$ASKPASS" "$EBS_LIST" "$CLI_LIST"' EXIT
 
 n_ebs=$(wc -l < "$EBS_LIST"); n_cli=$(wc -l < "$CLI_LIST")
 echo "== lab-start: $n_ebs EBS VM(s), $n_cli client VM(s), concurrency $CONCURRENCY =="
+start_portal
 
 if [ "$n_ebs" -gt 0 ]; then
   echo "== 1/3  booting EBS VMs + starting Oracle DB/app tier =="

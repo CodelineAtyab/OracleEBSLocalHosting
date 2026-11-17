@@ -28,6 +28,7 @@ git-ignored `.env` and the VM list from `scripts/inventory.conf`.
 | If the user asks to… | Run |
 |----------------------|-----|
 | **bring the lab up** / start everything (e.g. after a reboot) | `scripts/lab-start.sh` |
+| **make the lab come up by itself after a boot** (timer installed 2026-11-17) | `scripts/install-lab-autostart.sh` — `--status` / `--remove` |
 | **stop the lab** | `scripts/lab-stop.sh` |
 | **shut the whole host down** (e.g. to enter BIOS) | `scripts/lab-stop.sh --poweroff` |
 | **check status** — "is the lab up?" | `scripts/lab-status.sh` |
@@ -45,9 +46,12 @@ git-ignored `.env` and the VM list from `scripts/inventory.conf`.
 | **guest agent on EBS VMs** (IP/metrics in Proxmox) | `scripts/install-ebs-guest-agent.sh [vmid…]` · golden: `scripts/fix-golden-agent.sh` |
 | **give students their VNC address/PIN** | `scripts/client/vnc-credentials.sh` |
 | **write/refresh each student's credentials sheet** (`your_access.txt`) | `scripts/client/write-access-file.sh [vmid…]` |
+| **see the live status page** / rebuild it | `scripts/portal/portal-install.sh` — board at `http://192.168.100.250:8080/` |
+| **add another Proxmox host to the status page** | `scripts/portal/portal-add-host.sh <label> <url> <token-file>` |
 
 Dependency-free wrapper: `./run.sh up | down [--poweroff] | status | init N | rebuild [N] |
 provision <vmid> | reset <student> [--client] | sync-acls | class-users | access-files | vnc |
+portal [--web-only] | portal-add <label> <url> <token-file> |
 backup <mount> | export | build-golden`
 (an optional `Makefile` exposes the same as `make up`, `make init N=3`, …).
 
@@ -139,6 +143,8 @@ client-template (VM 9200, OL7.9 + Xfce + Firefox ESR52 x64 + OpenJDK8/IcedTea-We
 network: vmbr0 192.168.100.0/24 -- EBS on static IPs + /etc/hosts; clients DHCP
          (flat-LAN DHCP pool overlaps the static range -> pick ARP-free IPs; vmbr1 planned)
 access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped)
+portal:  LXC 9300 lab-portal, static .250, nginx :8080 -- read-only status board
+         (live client/sandbox addresses + health); polls :8006 with a PVEAuditor token
 ```
 
 ## Per-instance sizing (R12.1.3)
@@ -220,6 +226,53 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped
   9 clients ≈ 54 GB. With the class + 9 sandboxes that's ~182 GB of 188; a
   12-student lab at 6 GB clients needs ~256 GB. Cap concurrent sandboxes.
 
+## Status portal (LXC 9300) — built 2026-11-14
+- **`http://192.168.100.250:8080/`** — one read-only page per lab: every student's
+  **client** and **sandbox**, with **live addresses** (client IP from the guest
+  agent), `AppsLogin`/DB/VNC badges, copy buttons, `?stu=NN` highlight and warnings
+  (stopped VM, agent silent, **IP conflict**, AppsLogin ≠ 302, host unreachable).
+- Container: unprivileged Debian 13 LXC, 1 vCPU / **512 MB** / 2 GB, static `.250`,
+  `onboot`, `startup order=1`. nginx `:8080` (static only) + **one** `collect.py`
+  process: serial pass, `COLLECT_INTERVAL=10`, `PROBE_TIMEOUT=5`,
+  `CYCLE_BUDGET=30`, resumes where it stopped; ~3 s for the current 19 guests.
+  Client VNC is probed every 6th pass (`VNC_PROBE_EVERY`) to keep the guests'
+  `x11vnc` logs quiet.
+- API access: token **`portal@pve!collector`** with **`PVEAuditor`** (verified:
+  GETs 200, writes 403). One token file per host, `/etc/lab-portal/*.token` 0600 —
+  **never in the repo**. Token is recreated by `portal-install.sh`.
+- Multi-host: `endpoints.conf` = `<label> <url> <token-file>`. A Proxmox *cluster*
+  is one endpoint; standalone hosts are one line each. Guests are keyed
+  `(site, vmid)` — VMIDs collide across independent hosts. Add with
+  `scripts/portal/portal-add-host.sh`.
+- **Security stance:** the page is **unauthenticated** and shows full LAN
+  addresses by decision. It is **read-only by construction** (no credentials, no
+  write endpoints, no Proxmox UI link), so publishing it grants no control.
+  Only this page may ever be published; **never** the Proxmox UI, noVNC,
+  AppsLogin or SSH. The container does **not** ship `cloudflared`: a second
+  connector on the host's tunnel conflicts with the host's connector
+  (verified 2026-11-14). Publish the page with a hostname on the **host's**
+  tunnel pointing at `http://lab-portal.lab:8080` (the installer maps that name in
+  the host's `/etc/hosts`, so an IP change stays local).
+- Rebuild: `scripts/portal/portal-rebuild.sh` (the container is disposable).
+  `lab-start.sh` starts it first; `lab-status.sh` prints its row.
+
+## Boot autostart — built 2026-11-17
+- **Why:** on 2026-11-15 ~15:45 the host lost power (journal ends mid-flight, no
+  shutdown sequence, no `qmstop` task). It came back 2026-11-16 21:19 and only
+  the portal autostarted, because every lab guest is `onboot=0` and EBS does not
+  start its tiers on boot. Nobody had stopped the lab.
+- **What:** `scripts/install-lab-autostart.sh` (idempotent) installs
+  **`ebs-lab-autostart.timer`** (`OnBootSec=2min`) + **`ebs-lab-autostart.service`**
+  (`Type=oneshot`, runs `scripts/lab-start.sh` under
+  `flock -n /run/lock/ebs-lab-start.lock`). A boot now ends with the full lab:
+  EBS VMs → DB/app tier → `AppsLogin`=302 → client VMs.
+- **Deliberate:** EBS guests stay `onboot=0`. `onboot` would only power the VMs
+  on (no DB/app tier) and would start all ten at once, bypassing the
+  `CONCURRENCY=4` HDD guard. `9000`/`9200` are templates, clients stay manual.
+- Caveat: `lab-stop.sh` does not disable the timer — use
+  `scripts/install-lab-autostart.sh --remove` before a maintenance boot.
+  Logs: `journalctl -u ebs-lab-autostart -b`.
+
 ## Key IDs / names used by convention
 - Staging VM (`ebs-staging`): **900** — **retired 2026-10-03** (media kept at `/srv/ebs-media`)
 - Golden template VMID: **9000** (Proxmox **template**; templates cannot hold snapshots)
@@ -227,6 +280,7 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped
 - Student EBS clones: **9101–9112** (built `9101–9109`; static `.231–.235` + `.241–.244`)
 - Client template VMID: **9200**
 - Student client clones: **9201–9212** (built `9201–9209`, DHCP)
+- Status portal (LXC, not a VM): **9300** `lab-portal`, static `192.168.100.250`, `http://192.168.100.250:8080/`
 - Student Proxmox users: **`stu01–stu09@pve`** (role `PVEVMUser`)
 - Proxmox storage in examples: `local-lvm` (adjust to the actual host)
 
@@ -234,10 +288,13 @@ access:  Proxmox web UI :8006 -> noVNC; users stu01-stu09@pve (PVEVMUser, scoped
 ```bash
 # --- lab control (repo scripts/ — use these instead of ad-hoc commands) ---
 scripts/lab-start.sh              # boot all EBS VMs + start DB/app tiers + boot clients
+scripts/install-lab-autostart.sh # lab comes up 2 min after every host boot (--status/--remove)
 scripts/lab-start.sh ebs          # EBS guests only   (clients only: scripts/lab-start.sh clients)
 scripts/lab-status.sh             # VM states + AppsLogin code per EBS guest
 scripts/lab-stop.sh               # cleanly stop all guests (leave host up)
 scripts/lab-stop.sh --poweroff    # ...then power off the host
+scripts/lab-start.sh portal       # start only the status page container (9300)
+scripts/portal/portal-install.sh  # build/refresh the status page (idempotent)
 # inventory (VMID -> name -> role -> IP) is in scripts/inventory.conf; secrets in .env
 
 # host checks
@@ -268,8 +325,11 @@ qm destroy 9101 ; qm clone 9000 9101 --name ebs1213-stu01 --full 0
 EBS is **not free software**. The appliance is free to obtain but Oracle's terms
 apply; there is no free classroom license for this informal setup. Keep the lab
 **offline/LAN-only, non-commercial, dev/self-study, no redistribution, no
-production use**. Do not expose it to the public internet. State this scope when
-relevant; do not imply the setup is legally "licensed for training."
+production use**. Do not expose it to the public internet — the **only** allowed
+exception is the read-only status page (LXC 9300, `:8080`), which may sit behind
+a reverse tunnel. That page carries no credentials and has no write endpoints;
+EBS, noVNC, AppsLogin, SSH and the Proxmox UI stay LAN-only. State this scope
+when relevant; do not imply the setup is legally "licensed for training."
 
 ## Conventions
 - Prefer **documented Oracle procedures** (MOS Doc IDs in `README.md`) over
@@ -301,6 +361,12 @@ relevant; do not imply the setup is legally "licensed for training."
   class `9010` (`.223`); **EBS sandboxes `9101–9109`** (`.231–.235` + `.241–.244`,
   all `302`); client template `9200` + clones `9201–9209`; Proxmox users
   `stu01–stu09@pve`. Full detail: `PROGRESS.md` Stages 7–10.
+- **Status portal (2026-11-14):** LXC **9300 `lab-portal`** (Debian 13,
+  1 vCPU/512 MB/2 GB, static `.250`) serves **`http://192.168.100.250:8080/`** —
+  read-only board with live client/sandbox addresses, health badges and warnings.
+  One `collect.py` process (10 s serial cycle, ~3 s per pass for 19 guests);
+  nginx front door. Rebuild with
+  `scripts/portal/portal-rebuild.sh`; details in `PROGRESS.md`.
 - **Key fixes:** EBS VMs need **`--cpu Westmere`** (host panics the OL6 UEK
   kernel); SSH to the appliance needs **`-oHostKeyAlgorithms=+ssh-rsa`**; the FND
   `.dbc` must be **generated by AutoConfig** (`adautocfg.sh appspass=apps`), not

@@ -1,0 +1,22 @@
+[Unit]
+Description=EBS lab status collector
+Documentation=file:/opt/lab-portal/collect.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/lab-portal/collect.py
+Restart=always
+RestartSec=5
+
+# The collector runs as root to read /etc/lab-portal/*.token (0600).  It needs
+# to write exactly one place: the web root.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/www/lab-portal
+
+[Install]
+WantedBy=multi-user.target

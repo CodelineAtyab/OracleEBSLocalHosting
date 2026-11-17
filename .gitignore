@@ -5,3 +5,7 @@
 
 # OpenCode session export (large, unused)
 ebs_setup_opencode_session.json
+
+# Python bytecode (portal collector)
+__pycache__/
+*.pyc

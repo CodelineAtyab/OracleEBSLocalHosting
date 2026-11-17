@@ -68,6 +68,12 @@ bash "$REPO/scripts/sync-acls.sh" || echo "  WARN: sync-acls failed"
 # may have drifted).
 echo "  re-asserting class EBS logins (@codeline@)"
 bash "$REPO/scripts/create-class-users.sh" || echo "  WARN: class login reset failed"
+# Status portal (LXC 9300): reproducible from scripts/portal/ (token is recreated).
+echo "  (re)building the status portal"
+bash "$REPO/scripts/portal/portal-install.sh" || echo "  WARN: status portal install failed"
+# Boot autostart: the restored host should also come back up by itself.
+echo "  (re)installing boot autostart"
+bash "$REPO/scripts/install-lab-autostart.sh" >/dev/null || echo "  WARN: boot autostart install failed"
 
 echo "== 5/5  start the lab =="
 bash "$REPO/scripts/lab-start.sh"

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark">
+<title>EBS Lab — status</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>EBS Lab <span class="sub">status</span></h1>
+    <p class="meta">
+      <span id="age" class="age">loading…</span>
+      <span id="summary" class="summary"></span>
+    </p>
+  </div>
+  <div class="controls">
+    <label class="who">You are
+      <select id="who"><option value="">—</option></select>
+    </label>
+    <button id="refresh" class="btn" type="button">Refresh</button>
+  </div>
+</header>
+<main>
+  <div id="banner" class="banner" hidden></div>
+  <section id="warnings" class="warnings" hidden></section>
+  <div id="sites"></div>
+  <p class="foot">
+    Read-only status board. Addresses refresh every <span id="cadence">10</span>&nbsp;s.
+    No passwords are shown here. VNC, AppsLogin and SSH links only work from inside the lab network.
+  </p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

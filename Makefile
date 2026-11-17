@@ -6,7 +6,7 @@ VM ?=
 PO ?=
 ARGS ?=
 
-.PHONY: help up down status init rebuild provision reset sync-acls class-users access-files vnc backup base-backup export build-golden
+.PHONY: help up down autostart status init rebuild provision reset sync-acls class-users access-files vnc portal portal-add backup base-backup export build-golden
 
 help:                ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
@@ -14,6 +14,8 @@ up:                  ## start the whole lab
 	scripts/lab-start.sh
 down:                ## stop the whole lab (make down PO=--poweroff to power off)
 	scripts/lab-stop.sh $(PO)
+autostart:           ## make the lab come up after a host boot (ARGS=--remove to disable)
+	scripts/install-lab-autostart.sh $(ARGS)
 status:              ## show VM + AppsLogin status
 	scripts/lab-status.sh
 init:                ## add N students (make init N=3)
@@ -36,6 +38,10 @@ access-files:        ## write/refresh each client's your_access.txt + hostname
 	scripts/client/write-access-file.sh $(VM)
 vnc:                 ## show each client's live VNC address + PIN
 	scripts/client/vnc-credentials.sh
+portal:              ## build/refresh the live status page (LXC 9300)
+	scripts/portal/portal-install.sh $(ARGS)
+portal-add:          ## add another Proxmox host (make portal-add L=site-b U=https://ip:8006 F=/root/tok)
+	scripts/portal/portal-add-host.sh $(L) $(U) $(F)
 export:              ## back up golden + client template (ARGS="--storage local")
 	scripts/export-images.sh $(ARGS)
 build-golden:        ## rebuild the golden from pristine media (rare)
