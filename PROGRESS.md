@@ -870,7 +870,7 @@ enables, on the host:
 
 - `ebs-lab-autostart.timer` — `OnBootSec=2min`
 - `ebs-lab-autostart.service` — `Type=oneshot`, runs `scripts/lab-start.sh`
-  behind `flock -n /run/lock/ebs-lab-start.lock`
+  behind a PID-file lock (`/run/lock/ebs-lab-start.pid`)
 
 So a boot now boots the VMs, starts each Oracle DB + app tier over SSH, waits
 for `AppsLogin`=302, then starts the clients — the same path as a manual
@@ -881,7 +881,10 @@ once. Templates `9000`/`9200` and the clients stay `onboot=0`.
 
 Also: `lab-start.sh` now takes a non-blocking lock for full-lab runs only (its
 internal `--one-ebs`/`--one-client` workers bypass it), so a boot run and a
-manual run cannot overlap. `run.sh autostart`, `make autostart`,
+manual run cannot overlap. **Gotcha:** it is a **PID file**
+(`/run/lock/ebs-lab-start.pid`), **not `flock`** — `qm start` hands inherited
+fds to `qemu-kvm`, so a flock fd stayed locked for as long as the guests ran
+(observed: every later run said "already in progress"). `run.sh autostart`, `make autostart`,
 `restore-ebs-lab.sh` (re-installs it on a restored host), `README.md` §14 and
 `AGENTS.md` were updated. `install-lab-autostart.sh --remove` turns it off; note
 `lab-stop.sh` does **not** disable it, so a maintenance boot needs `--remove`

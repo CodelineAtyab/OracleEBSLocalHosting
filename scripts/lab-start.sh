@@ -69,11 +69,6 @@ case "${1:-}" in
 esac
 
 # ---------- main ------------------------------------------------------------
-# Serialize full-lab runs (manual + the boot autostart timer). Workers invoked
-# above exit before reaching this, so they never contend for the lock.
-exec 9>/run/lock/ebs-lab-start.lock
-flock -n 9 || { echo "== lab-start: another run is already in progress — nothing to do =="; exit 0; }
-
 WHAT="${1:-all}"
 CONCURRENCY="${CONCURRENCY:-4}"
 
@@ -86,7 +81,24 @@ fi
 EBS_LIST=$(mktemp); CLI_LIST=$(mktemp)
 { [ "$WHAT" = clients ] || ebs_rows;    } > "$EBS_LIST"
 { [ "$WHAT" = ebs ]     || client_rows; } > "$CLI_LIST"
-trap 'rm -f "$ASKPASS" "$EBS_LIST" "$CLI_LIST"' EXIT
+trap 'rm -f "$ASKPASS" "$EBS_LIST" "$CLI_LIST" "$LAB_LOCKFILE"' EXIT
+
+# Serialize full-lab runs (manual + the boot autostart timer).
+# NOTE: not flock(1) on an fd: `qm start` hands inherited fds to qemu, so the
+# lock would stay held for as long as the guest runs. A PID file is immune.
+LAB_LOCKFILE=/run/lock/ebs-lab-start.pid
+lab_lock() {
+  local prev
+  if ( set -o noclobber; echo "$$" >"$LAB_LOCKFILE" ) 2>/dev/null; then return 0; fi
+  prev=$(cat "$LAB_LOCKFILE" 2>/dev/null || true)
+  if [ -n "$prev" ] && kill -0 "$prev" 2>/dev/null; then
+    echo "== lab-start: another run (pid $prev) is already in progress — nothing to do =="
+    return 1
+  fi
+  rm -f "$LAB_LOCKFILE"                       # stale (host rebooted / run killed)
+  ( set -o noclobber; echo "$$" >"$LAB_LOCKFILE" ) 2>/dev/null
+}
+lab_lock || exit 0
 
 n_ebs=$(wc -l < "$EBS_LIST"); n_cli=$(wc -l < "$CLI_LIST")
 echo "== lab-start: $n_ebs EBS VM(s), $n_cli client VM(s), concurrency $CONCURRENCY =="

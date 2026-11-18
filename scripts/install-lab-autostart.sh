@@ -31,7 +31,6 @@ START="$REPO/scripts/lab-start.sh"
 
 SERVICE=/etc/systemd/system/ebs-lab-autostart.service
 TIMER=/etc/systemd/system/ebs-lab-autostart.timer
-LOCK=/run/lock/ebs-lab-start.lock
 BOOT_DELAY="${BOOT_DELAY:-2min}"
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -93,8 +92,9 @@ ConditionPathExists=$START
 
 [Service]
 Type=oneshot
-# -n: if a lab-start.sh is already running (manual run), let it own the lab.
-ExecStart=/usr/bin/flock -n $LOCK $START
+# lab-start.sh takes its own PID-file lock (see the script) — flock(1) would
+# leak its fd into qemu and never release it.
+ExecStart=$START
 TimeoutStartSec=0
 Nice=10
 IOSchedulingClass=best-effort

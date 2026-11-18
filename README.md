@@ -785,7 +785,7 @@ Why a timer and not `qm set --onboot 1`: onboot only powers a VM on — the
 appliance's DB and app tier stay down, so Applications would still be offline.
 The timer reuses the same boot order and `CONCURRENCY=4` cap as a manual
 `lab-start.sh`, and only boots the clients once EBS is healthy. `lab-start.sh`
-is idempotent and takes a lock (`/run/lock/ebs-lab-start.lock`), so a boot run
+is idempotent and takes a PID-file lock (`/run/lock/ebs-lab-start.pid`), so a boot run
 and a manual run cannot overlap. The status portal LXC `9300` keeps
 `onboot=1`/`startup order=1`, so the board is up first and shows the lab
 coming online. Templates `9000`/`9200` stay `onboot=0` and are never started.

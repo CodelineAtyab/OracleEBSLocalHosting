@@ -263,8 +263,8 @@ portal:  LXC 9300 lab-portal, static .250, nginx :8080 -- read-only status board
   start its tiers on boot. Nobody had stopped the lab.
 - **What:** `scripts/install-lab-autostart.sh` (idempotent) installs
   **`ebs-lab-autostart.timer`** (`OnBootSec=2min`) + **`ebs-lab-autostart.service`**
-  (`Type=oneshot`, runs `scripts/lab-start.sh` under
-  `flock -n /run/lock/ebs-lab-start.lock`). A boot now ends with the full lab:
+  (`Type=oneshot`, runs `scripts/lab-start.sh`, which takes a PID-file lock at
+  `/run/lock/ebs-lab-start.pid`). A boot now ends with the full lab:
   EBS VMs → DB/app tier → `AppsLogin`=302 → client VMs.
 - **Deliberate:** EBS guests stay `onboot=0`. `onboot` would only power the VMs
   on (no DB/app tier) and would start all ten at once, bypassing the
